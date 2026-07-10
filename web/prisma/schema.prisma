@@ -102,8 +102,8 @@ model Company {
   city                String?
   website             String?
   domain              String?
-  normalizedBrand     String?
   brandNames          String[]
+  brands              CompanyBrand[]
   customerType        String
   businessSummary     String
   demandEvidence      String
@@ -126,7 +126,21 @@ model Company {
 
   @@index([normalizedName, country, region])
   @@index([domain, country, region])
-  @@index([normalizedBrand, country, region])
+}
+
+model CompanyBrand {
+  id             String   @id @default(cuid())
+  companyId      String
+  company        Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  name           String
+  normalizedName String
+  country        String
+  region         String
+  createdAt      DateTime @default(now())
+
+  @@index([companyId])
+  @@index([normalizedName, country, region])
+  @@unique([companyId, normalizedName, country, region])
 }
 
 model Contact {

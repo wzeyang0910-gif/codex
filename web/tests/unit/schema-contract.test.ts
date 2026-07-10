@@ -16,15 +16,29 @@ describe("Prisma schema contract", () => {
     const companyBlock = getModelBlock("Company");
 
     expect(companyBlock).toContain("normalizedName      String");
-    expect(companyBlock).toContain("normalizedBrand     String?");
+    expect(companyBlock).not.toContain("normalizedBrand");
     expect(companyBlock).toContain("domain              String?");
     expect(companyBlock).toContain("country             String");
     expect(companyBlock).toContain("region              String");
     expect(companyBlock).toContain("brandNames          String[]");
+    expect(companyBlock).toContain("brands              CompanyBrand[]");
     expect(companyBlock).toContain("deliveredAt         DateTime?");
     expect(companyBlock).toContain("@@index([normalizedName, country, region])");
     expect(companyBlock).toContain("@@index([domain, country, region])");
-    expect(companyBlock).toContain("@@index([normalizedBrand, country, region])");
+  });
+
+  it("models multiple normalized brand names per company for dedupe checks", () => {
+    const companyBrandBlock = getModelBlock("CompanyBrand");
+
+    expect(companyBrandBlock).toContain("companyId      String");
+    expect(companyBrandBlock).toMatch(/company\s+Company\s+@relation\(fields: \[companyId\], references: \[id\]/);
+    expect(companyBrandBlock).toContain("name           String");
+    expect(companyBrandBlock).toContain("normalizedName String");
+    expect(companyBrandBlock).toContain("country        String");
+    expect(companyBrandBlock).toContain("region         String");
+    expect(companyBrandBlock).toContain("@@index([companyId])");
+    expect(companyBrandBlock).toContain("@@index([normalizedName, country, region])");
+    expect(companyBrandBlock).toContain("@@unique([companyId, normalizedName, country, region])");
   });
 
   it("keeps ApiCallLog attributable to user, task, and company", () => {
