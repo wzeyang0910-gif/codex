@@ -113,3 +113,28 @@ Fix commit target: `fix: model multi-brand dedupe keys`
 ### Concerns
 
 - Vitest still prints the existing Vite CJS deprecation warning during test runs, but the requested tests pass.
+
+## Third Fix Section
+
+Date: 2026-07-10
+Fix commit target: `fix: enforce global dedupe constraints`
+
+### Files Changed
+
+- `D:\Codex\原研\web\prisma\schema.prisma`
+- `D:\Codex\原研\web\tests\unit\schema-contract.test.ts`
+- `D:\Codex\原研\.superpowers\sdd\task-2-report.md`
+
+### Test Outputs
+
+1. `npm test -- products.test.ts schema-contract.test.ts`
+   - Red run before schema edits: failed as expected because company dedupe used indexes, brand uniqueness was company-scoped, and `ApiCallLog.userId`/`taskId` were optional.
+   - Final run after fixes: `2 passed (2 test files), 6 passed (6 tests)`.
+2. `npm run prisma:generate`
+   - Result: `Generated Prisma Client (v5.22.0) to .\node_modules\@prisma\client`.
+3. `npm run typecheck`
+   - Result: exit code `0`.
+
+### Concerns
+
+- Vitest still prints the existing Vite CJS deprecation warning during test runs, but the requested tests pass.

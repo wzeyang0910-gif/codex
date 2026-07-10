@@ -23,8 +23,8 @@ describe("Prisma schema contract", () => {
     expect(companyBlock).toContain("brandNames          String[]");
     expect(companyBlock).toContain("brands              CompanyBrand[]");
     expect(companyBlock).toContain("deliveredAt         DateTime?");
-    expect(companyBlock).toContain("@@index([normalizedName, country, region])");
-    expect(companyBlock).toContain("@@index([domain, country, region])");
+    expect(companyBlock).toContain("@@unique([normalizedName, country, region])");
+    expect(companyBlock).toContain("@@unique([domain, country, region])");
   });
 
   it("models multiple normalized brand names per company for dedupe checks", () => {
@@ -37,8 +37,8 @@ describe("Prisma schema contract", () => {
     expect(companyBrandBlock).toContain("country        String");
     expect(companyBrandBlock).toContain("region         String");
     expect(companyBrandBlock).toContain("@@index([companyId])");
-    expect(companyBrandBlock).toContain("@@index([normalizedName, country, region])");
-    expect(companyBrandBlock).toContain("@@unique([companyId, normalizedName, country, region])");
+    expect(companyBrandBlock).toContain("@@unique([normalizedName, country, region])");
+    expect(companyBrandBlock).not.toContain("@@unique([companyId, normalizedName, country, region])");
   });
 
   it("keeps ApiCallLog attributable to user, task, and company", () => {
@@ -51,11 +51,11 @@ describe("Prisma schema contract", () => {
     expect(leadTaskBlock).toContain("apiCallLogs     ApiCallLog[]");
     expect(companyBlock).toContain("apiCallLogs         ApiCallLog[]");
 
-    expect(apiCallLogBlock).toMatch(/userId\s+String\?/);
-    expect(apiCallLogBlock).toMatch(/taskId\s+String\?/);
+    expect(apiCallLogBlock).toMatch(/userId\s+String\s*\n/);
+    expect(apiCallLogBlock).toMatch(/taskId\s+String\s*\n/);
     expect(apiCallLogBlock).toMatch(/companyId\s+String\?/);
-    expect(apiCallLogBlock).toMatch(/user\s+User\?\s+@relation\(fields: \[userId\], references: \[id\]\)/);
-    expect(apiCallLogBlock).toMatch(/task\s+LeadTask\?\s+@relation\(fields: \[taskId\], references: \[id\]\)/);
+    expect(apiCallLogBlock).toMatch(/user\s+User\s+@relation\(fields: \[userId\], references: \[id\]\)/);
+    expect(apiCallLogBlock).toMatch(/task\s+LeadTask\s+@relation\(fields: \[taskId\], references: \[id\]\)/);
     expect(apiCallLogBlock).toMatch(/company\s+Company\?\s+@relation\(fields: \[companyId\], references: \[id\]\)/);
     expect(apiCallLogBlock).toContain("@@index([userId, createdAt])");
     expect(apiCallLogBlock).toContain("@@index([taskId, createdAt])");

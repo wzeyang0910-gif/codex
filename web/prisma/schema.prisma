@@ -124,8 +124,8 @@ model Company {
   followUps           FollowUp[]
   apiCallLogs         ApiCallLog[]
 
-  @@index([normalizedName, country, region])
-  @@index([domain, country, region])
+  @@unique([normalizedName, country, region])
+  @@unique([domain, country, region])
 }
 
 model CompanyBrand {
@@ -139,8 +139,7 @@ model CompanyBrand {
   createdAt      DateTime @default(now())
 
   @@index([companyId])
-  @@index([normalizedName, country, region])
-  @@unique([companyId, normalizedName, country, region])
+  @@unique([normalizedName, country, region])
 }
 
 model Contact {
@@ -190,11 +189,11 @@ model FollowUp {
 
 model ApiCallLog {
   id          String   @id @default(cuid())
-  userId      String?
-  taskId      String?
+  userId      String
+  taskId      String
   companyId   String?
-  user        User?    @relation(fields: [userId], references: [id])
-  task        LeadTask? @relation(fields: [taskId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
+  task        LeadTask @relation(fields: [taskId], references: [id])
   company     Company? @relation(fields: [companyId], references: [id])
   provider    String
   endpoint    String
