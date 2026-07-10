@@ -24,7 +24,7 @@ export type ScoreLeadResult = {
   };
 };
 
-const ACCEPT_ALL_RISK_NOTE = "閭涓?accept-all锛屽彧鑳戒綔涓?B 绫诲鎴穈";
+const ACCEPT_ALL_RISK_NOTE = "邮箱为 accept-all，只能作为 B 类客户";
 
 function clampScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));

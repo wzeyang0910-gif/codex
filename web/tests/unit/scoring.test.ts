@@ -27,7 +27,7 @@ describe("lead scoring", () => {
     });
 
     expect(result.grade).toBe("B");
-    expect(result.riskNotes).toContain("閭涓?accept-all锛屽彧鑳戒綔涓?B 绫诲鎴穈");
+    expect(result.riskNotes).toContain("邮箱为 accept-all，只能作为 B 类客户");
   });
 
   it("rejects companies without personal work email", () => {
