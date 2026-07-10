@@ -9,7 +9,7 @@ export type SessionUser = {
 
 export function requireRole(userRole: UserRole, allowed: UserRole[]): void {
   if (!allowed.includes(userRole)) {
-    throw new Error("鏉冮檺涓嶈冻");
+    throw new Error("权限不足");
   }
 }
 

@@ -14,7 +14,7 @@ export async function POST(request: Request) {
 
   if (!parsed.success) {
     return NextResponse.json(
-      { error: "閭鎴栧瘑鐮佹牸寮忎笉姝ｇ‘" },
+      { error: "邮箱或密码格式不正确" },
       { status: 400 }
     );
   }
@@ -25,7 +25,7 @@ export async function POST(request: Request) {
 
   if (!user) {
     return NextResponse.json(
-      { error: "閭鎴栧瘑鐮侀敊璇?" },
+      { error: "邮箱或密码错误" },
       { status: 401 }
     );
   }
@@ -37,7 +37,7 @@ export async function POST(request: Request) {
 
   if (!passwordMatches) {
     return NextResponse.json(
-      { error: "閭鎴栧瘑鐮侀敊璇?" },
+      { error: "邮箱或密码错误" },
       { status: 401 }
     );
   }

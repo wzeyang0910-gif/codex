@@ -11,6 +11,6 @@ describe("role checks", () => {
   });
 
   it("blocks sales from admin pages", () => {
-    expect(() => requireRole("sales", ["admin"])).toThrow("鏉冮檺涓嶈冻");
+    expect(() => requireRole("sales", ["admin"])).toThrow("权限不足");
   });
 });

@@ -10,7 +10,7 @@ describe("daily customer quota", () => {
     expect(canCreateTask(30, 5)).toEqual({
       allowed: false,
       remaining: 0,
-      reason: "浠婃棩棰濆害宸茬敤瀹?"
+      reason: "今日额度已用完"
     });
   });
 
@@ -18,7 +18,7 @@ describe("daily customer quota", () => {
     expect(canCreateTask(28, 5)).toEqual({
       allowed: false,
       remaining: 2,
-      reason: "浠婃棩鍓╀綑棰濆害涓嶈冻锛屼粎鍓?2 瀹?"
+      reason: "今日剩余额度不足，仅剩 2 家"
     });
   });
 });

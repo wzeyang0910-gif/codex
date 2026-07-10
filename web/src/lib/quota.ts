@@ -10,7 +10,7 @@ export function canCreateTask(
     return {
       allowed: false,
       remaining,
-      reason: "浠婃棩棰濆害宸茬敤瀹?"
+      reason: "今日额度已用完"
     };
   }
 
@@ -18,7 +18,7 @@ export function canCreateTask(
     return {
       allowed: false,
       remaining,
-      reason: `浠婃棩鍓╀綑棰濆害涓嶈冻锛屼粎鍓?${remaining} 瀹?`
+      reason: `今日剩余额度不足，仅剩 ${remaining} 家`
     };
   }
 

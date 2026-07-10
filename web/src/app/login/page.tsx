@@ -37,7 +37,7 @@ export default function LoginPage() {
           <p className="login-eyebrow">常州原研医疗内部系统</p>
           <h1 id="login-title">内部获客平台登录</h1>
           <p className="login-copy">
-            仅供公司内部管理员和业务员使用。本地演示账号可直接用于验证 MVP 流程。
+            仅供公司内部管理员和业务员使用。本地种子账号可直接用于验证 MVP 流程。
           </p>
         </div>
 
