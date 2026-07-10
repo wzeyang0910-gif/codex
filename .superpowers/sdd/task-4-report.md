@@ -119,6 +119,39 @@ Concerns:
 
 - Vitest still prints the existing Vite CJS Node API deprecation warning during test runs; it does not fail the suite.
 
+## Fix Note: Clean Dedupe Test Copy
+
+Files changed:
+
+- `web/tests/unit/dedupe.test.ts`
+- `.superpowers/sdd/task-4-report.md`
+
+Verification:
+
+```text
+npm test -- dedupe.test.ts
+Exit code: 0
+Test Files 1 passed (1)
+Tests 4 passed (4)
+```
+
+```text
+npm test -- scoring.test.ts dedupe.test.ts evidence.test.ts outreach.test.ts
+Exit code: 0
+Test Files 4 passed (4)
+Tests 11 passed (11)
+```
+
+```text
+npm run typecheck
+Exit code: 0
+tsc --noEmit
+```
+
+Concerns:
+
+- Vitest still prints the existing Vite CJS Node API deprecation warning during test runs; it does not fail the suite.
+
 ## Fix Note: Preserve CJK Industry Names and Add Outreach Language Selection
 
 Files changed:

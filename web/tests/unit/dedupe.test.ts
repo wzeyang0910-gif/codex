@@ -7,7 +7,7 @@ describe("company dedupe", () => {
   });
 
   it("keeps meaningful non-Latin company text", () => {
-    expect(normalizeCompanyName("鍘熺爺鍖荤枟鍣ㄦ锛堝父宸烇級鏈夐檺鍏徃")).toContain("鍘熺爺鍖荤枟鍣ㄦ");
+    expect(normalizeCompanyName("常州康民医疗用品有限公司")).toContain("康民医疗用品");
   });
 
   it("preserves meaningful CJK medical device industry words", () => {
