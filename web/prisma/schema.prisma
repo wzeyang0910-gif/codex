@@ -53,6 +53,7 @@ model User {
   createdAt    DateTime  @default(now())
   tasks        LeadTask[]
   companies    Company[] @relation("OwnerCompanies")
+  apiCallLogs  ApiCallLog[]
 }
 
 model Product {
@@ -85,6 +86,7 @@ model LeadTask {
   completedAt     DateTime?
   createdAt       DateTime       @default(now())
   companies       Company[]
+  apiCallLogs     ApiCallLog[]
 }
 
 model Company {
@@ -100,6 +102,7 @@ model Company {
   city                String?
   website             String?
   domain              String?
+  normalizedBrand     String?
   brandNames          String[]
   customerType        String
   businessSummary     String
@@ -111,6 +114,7 @@ model Company {
   status              FollowUpStatus @default(not_contacted)
   notes               String         @default("")
   isDelivered         Boolean        @default(false)
+  deliveredAt         DateTime?
   rejectionReason     String?
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
@@ -118,9 +122,11 @@ model Company {
   evidences           Evidence[]
   letters             OutreachLetter[]
   followUps           FollowUp[]
+  apiCallLogs         ApiCallLog[]
 
-  @@index([normalizedName, country])
-  @@index([domain])
+  @@index([normalizedName, country, region])
+  @@index([domain, country, region])
+  @@index([normalizedBrand, country, region])
 }
 
 model Contact {
@@ -170,6 +176,12 @@ model FollowUp {
 
 model ApiCallLog {
   id          String   @id @default(cuid())
+  userId      String?
+  taskId      String?
+  companyId   String?
+  user        User?    @relation(fields: [userId], references: [id])
+  task        LeadTask? @relation(fields: [taskId], references: [id])
+  company     Company? @relation(fields: [companyId], references: [id])
   provider    String
   endpoint    String
   status      String
@@ -177,4 +189,8 @@ model ApiCallLog {
   durationMs  Int
   error       String?
   createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([taskId, createdAt])
+  @@index([companyId, createdAt])
 }
