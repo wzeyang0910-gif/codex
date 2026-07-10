@@ -13,13 +13,12 @@ const ENGLISH_SUFFIXES = new Set([
   "trading"
 ]);
 
-const CJK_SUFFIX_PATTERN =
-  /(株式会社|有限会社|股份有限公司|有限责任公司|有限公司|公司|会社|有限|責任|责任|貿易|贸易|商贸|醫療器械|医疗器械)$/gu;
+const CJK_LEGAL_SUFFIX_PATTERN = /(株式会社|有限会社|股份有限公司|有限责任公司|有限公司|公司|会社)$/gu;
 
 export function normalizeCompanyName(name: string): string {
   const normalized = name
     .toLowerCase()
-    .replace(CJK_SUFFIX_PATTERN, "")
+    .replace(CJK_LEGAL_SUFFIX_PATTERN, "")
     .replace(/[^\p{L}\p{N}\uE000-\uF8FF]+/gu, " ")
     .trim();
 
@@ -27,7 +26,7 @@ export function normalizeCompanyName(name: string): string {
     .split(/\s+/)
     .filter((token) => token && !ENGLISH_SUFFIXES.has(token));
 
-  return tokens.join(" ").replace(CJK_SUFFIX_PATTERN, "").trim();
+  return tokens.join(" ").replace(CJK_LEGAL_SUFFIX_PATTERN, "").trim();
 }
 
 export function extractDomain(url?: string | null): string | null {
