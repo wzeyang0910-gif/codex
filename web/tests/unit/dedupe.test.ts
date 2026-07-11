@@ -6,6 +6,11 @@ describe("company dedupe", () => {
     expect(normalizeCompanyName("Alpha Medical Trading Co., Ltd.")).toBe("alpha medical");
   });
 
+  it("removes Japanese legal-form prefixes", () => {
+    expect(normalizeCompanyName("株式会社アルファ")).toBe("アルファ");
+    expect(normalizeCompanyName("有限会社ベータ")).toBe("ベータ");
+  });
+
   it("keeps meaningful non-Latin company text", () => {
     expect(normalizeCompanyName("常州康民医疗用品有限公司")).toContain("康民医疗用品");
   });
