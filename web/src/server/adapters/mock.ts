@@ -109,16 +109,21 @@ export function createMockAdapterSet(): AdapterSet {
       async findContacts(company: CandidateCompany): Promise<FoundContact[]> {
         const domain = company.website?.replace(/^https?:\/\//, "") ?? "example.com";
         const isDammamMedical = company.name === "Dammam Medical Distribution Co.";
+        const isPharmacy = company.name.includes("Pharmacy");
 
         return [
           {
             name: isDammamMedical
               ? "Noura Al-Harbi"
+              : isPharmacy
+                ? "Fatima Almutairi"
               : company.name.includes("Sports")
                 ? "Omar Hassan"
                 : "Ahmed Saleh",
             title: isDammamMedical
               ? "Procurement Director"
+              : isPharmacy
+                ? "Procurement Manager"
               : company.name.includes("Sports")
                 ? "Managing Director"
                 : "General Manager",
@@ -129,11 +134,11 @@ export function createMockAdapterSet(): AdapterSet {
               : company.name.includes("Sports")
                 ? `omar.hassan@${domain}`
                 : `ahmed.saleh@${domain}`,
-            emailStatus: company.name.includes("Pharmacy") ? "accept_all" : "valid",
+            emailStatus: isPharmacy ? "accept_all" : "valid",
             source: "Mock Prospeo + Hunter verification",
             sourceUrl: company.sourceUrl,
             isPrimary: true,
-            riskNote: company.name.includes("Pharmacy")
+            riskNote: isPharmacy
               ? "accept-all domain, confirm before outreach"
               : undefined
           }

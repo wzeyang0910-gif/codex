@@ -96,10 +96,13 @@ describe("mock adapter set", () => {
 
     expect(company.name).toBe("Jeddah Pharmacy Supply Network");
     expect(contact).toMatchObject({
+      name: "Fatima Almutairi",
+      title: "Procurement Manager",
       emailStatus: "accept_all",
       riskNote: "accept-all domain, confirm before outreach",
       sourceUrl: company.sourceUrl
     });
+    expect(contact.email).toMatch(/^fatima\.almutairi@/);
   });
 });
 

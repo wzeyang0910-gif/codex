@@ -26,7 +26,7 @@ export type FoundContact = {
   email: string;
   emailStatus: EmailStatus;
   source: string;
-  sourceUrl?: string;
+  sourceUrl: string;
   isPrimary: boolean;
   riskNote?: string;
 };
