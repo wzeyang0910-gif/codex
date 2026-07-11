@@ -12,8 +12,8 @@ const mockCompanies: CandidateCompany[] = [
     region: "Middle East",
     city: "Riyadh",
     website: "https://arabian-medical.example",
-    customerType: "distributor",
-    businessSummary: "distributes wound care, orthopedic and rehabilitation supplies in Saudi Arabia",
+    customerType: "medical distributor",
+    businessSummary: "medical distributor of wound care, orthopedic and rehabilitation supplies in Saudi Arabia",
     source: "Mock industry directory",
     sourceUrl: "https://example.com/arabian-medical",
     demandSignals: ["wound care catalog", "orthopedic supplies", "imports medical consumables"]
@@ -36,11 +36,11 @@ const mockCompanies: CandidateCompany[] = [
     region: "Middle East",
     city: "Riyadh",
     website: "https://riyadh-first-aid.example",
-    customerType: "wholesaler",
-    businessSummary: "wholesales first aid kits, bandages and wound plasters",
+    customerType: "first aid distributor",
+    businessSummary: "medical distributor of first aid kits, bandages and wound plasters",
     source: "Mock B2B directory",
     sourceUrl: "https://example.com/riyadh-first-aid",
-    demandSignals: ["first aid wholesale", "bandage category"]
+    demandSignals: ["first aid wholesale", "kinesiology tape and bandage category"]
   },
   {
     name: "Mena Rehab Products",
@@ -60,8 +60,8 @@ const mockCompanies: CandidateCompany[] = [
     region: "Middle East",
     city: "Jeddah",
     website: "https://jeddah-pharmacy.example",
-    customerType: "pharmacy supplier",
-    businessSummary: "supplies pharmacies with wound care and personal care consumables",
+    customerType: "pharmacy distributor",
+    businessSummary: "medical distributor supplying pharmacies with wound care and personal care consumables",
     source: "Mock company database",
     sourceUrl: "https://example.com/jeddah-pharmacy",
     demandSignals: ["pharmacy supply", "wound plaster category", "acne patch category"]
@@ -73,7 +73,7 @@ const mockCompanies: CandidateCompany[] = [
     city: "Dammam",
     website: "https://dammam-medical.example",
     customerType: "medical distributor",
-    businessSummary: "distributes hospital consumables, wound care products and rehabilitation supplies across the Eastern Province",
+    businessSummary: "medical distributor of hospital consumables, wound care products and rehabilitation supplies across the Eastern Province",
     source: "Mock medical trade directory",
     sourceUrl: "https://example.com/dammam-medical-distribution",
     demandSignals: ["medical consumables catalog", "wound care distribution", "rehabilitation supply tenders"]
@@ -85,12 +85,23 @@ export function createMockAdapterSet(): AdapterSet {
     search: {
       async searchCompanies(input: CompanySearchInput) {
         return mockCompanies.filter((company) => {
-          const countryOk = input.countries.length === 0 || input.countries.includes(company.country);
-          const keywordText = `${company.businessSummary} ${company.demandSignals.join(" ")}`.toLowerCase();
-          const keywordOk = input.keywords.some((keyword) =>
-            keywordText.includes(keyword.toLowerCase().split(" ")[0])
-          );
-          return countryOk || keywordOk;
+          const regionOk = !normalize(input.region) || normalize(company.region) === normalize(input.region);
+          const countryOk =
+            input.countries.length === 0 ||
+            input.countries.some((country) => normalize(country) === normalize(company.country));
+          const customerTypeOk =
+            input.customerTypes.length === 0 ||
+            input.customerTypes.some((customerType) =>
+              normalize(company.customerType).includes(normalize(customerType))
+            );
+          const searchableFields = [company.businessSummary, company.customerType, ...company.demandSignals];
+          const keywordOk =
+            input.keywords.length === 0 ||
+            input.keywords.some((keyword) =>
+              searchableFields.some((field) => normalize(field).includes(normalize(keyword)))
+            );
+
+          return regionOk && countryOk && customerTypeOk && keywordOk;
         });
       }
     },
@@ -130,6 +141,10 @@ export function createMockAdapterSet(): AdapterSet {
       }
     }
   };
+}
+
+function normalize(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 export function createAdapterSet(): AdapterSet {

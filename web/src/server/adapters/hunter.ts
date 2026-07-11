@@ -1,6 +1,5 @@
+import { getServerProviderConfig } from "./provider-config";
+
 export function getHunterConfig() {
-  return {
-    enabled: Boolean(process.env.HUNTER_API_KEY),
-    apiKey: process.env.HUNTER_API_KEY ?? ""
-  };
+  return getServerProviderConfig("HUNTER_API_KEY");
 }

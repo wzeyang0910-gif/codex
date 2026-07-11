@@ -1,6 +1,5 @@
+import { getServerProviderConfig } from "./provider-config";
+
 export function getProspeoConfig() {
-  return {
-    enabled: Boolean(process.env.PROSPEO_API_KEY),
-    apiKey: process.env.PROSPEO_API_KEY ?? ""
-  };
+  return getServerProviderConfig("PROSPEO_API_KEY");
 }

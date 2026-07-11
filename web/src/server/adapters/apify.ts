@@ -1,6 +1,5 @@
+import { getServerProviderConfig } from "./provider-config";
+
 export function getApifyConfig() {
-  return {
-    enabled: Boolean(process.env.APIFY_API_KEY),
-    apiKey: process.env.APIFY_API_KEY ?? ""
-  };
+  return getServerProviderConfig("APIFY_API_KEY");
 }
