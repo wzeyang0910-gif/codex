@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { createSessionToken, SESSION_COOKIE_NAME, sessionCookieOptions } from "@/lib/session";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -42,7 +43,23 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({
+  let token: string;
+
+  try {
+    token = createSessionToken({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role
+    });
+  } catch {
+    return NextResponse.json(
+      { error: "登录服务暂不可用" },
+      { status: 500 }
+    );
+  }
+
+  const response = NextResponse.json({
     user: {
       id: user.id,
       name: user.name,
@@ -50,4 +67,8 @@ export async function POST(request: Request) {
       role: user.role
     }
   });
+
+  response.cookies.set(SESSION_COOKIE_NAME, token, sessionCookieOptions());
+
+  return response;
 }
