@@ -192,4 +192,101 @@ describe("task processing", () => {
       }
     });
   });
+
+  it("skips a duplicate company create while preserving earlier and later deliveries", async () => {
+    const updates: unknown[] = [];
+    const createAttempts: unknown[] = [];
+    const result: PipelineResult = {
+      marketSummary: { summary: "summary", keywords: ["kinesiology tape"], buyerConcerns: [] },
+      searchedCount: 3,
+      delivered: [
+        deliveredLead(),
+        deliveredLead({ name: "Duplicate Medical", normalizedName: "duplicate medical" }),
+        deliveredLead({ name: "Fresh Medical Trading", normalizedName: "fresh medical trading" })
+      ],
+      rejected: []
+    };
+    const prisma = {
+      leadTask: {
+        findUnique: async () => task,
+        update: async (args: unknown) => {
+          updates.push(args);
+          return args;
+        }
+      },
+      company: {
+        findMany: async () => [],
+        create: async (args: unknown) => {
+          createAttempts.push(args);
+          if (createAttempts.length === 2) {
+            throw Object.assign(new Error("duplicate"), { code: "P2002" });
+          }
+          return args;
+        }
+      }
+    };
+    const adapters: AdapterSet = {
+      search: { searchCompanies: async () => [] },
+      contacts: { findContacts: async () => [] }
+    };
+
+    await expect(
+      processLeadTask("task_1", {
+        prisma,
+        createAdapters: () => adapters,
+        runPipeline: async () => result,
+        now: () => new Date("2026-07-12T08:00:00Z")
+      })
+    ).resolves.toBeUndefined();
+
+    expect(createAttempts).toHaveLength(3);
+    expect(updates.at(-1)).toMatchObject({
+      data: { status: "partial", deliveredCount: 2, searchedCount: 3, rejectedCount: 1 }
+    });
+  });
+
+  it("does not reject when the task lookup and failed-status update both fail", async () => {
+    const prisma = {
+      leadTask: {
+        findUnique: async () => {
+          throw new Error("lookup unavailable");
+        },
+        update: async () => {
+          throw new Error("status unavailable");
+        }
+      },
+      company: {
+        findMany: async () => [],
+        create: async () => ({})
+      }
+    };
+
+    await expect(processLeadTask("task_1", { prisma })).resolves.toBeUndefined();
+  });
+
+  it("marks the task failed without rejecting when the initial running update fails", async () => {
+    const updates: unknown[] = [];
+    const prisma = {
+      leadTask: {
+        findUnique: async () => task,
+        update: async (args: unknown) => {
+          updates.push(args);
+          if (updates.length === 1) {
+            throw new Error("running update unavailable");
+          }
+          return args;
+        }
+      },
+      company: {
+        findMany: async () => [],
+        create: async () => ({})
+      }
+    };
+
+    await expect(
+      processLeadTask("task_1", { prisma, now: () => new Date("2026-07-12T08:00:00Z") })
+    ).resolves.toBeUndefined();
+
+    expect(updates.at(-1)).toMatchObject({ data: { status: "failed" } });
+  });
 });

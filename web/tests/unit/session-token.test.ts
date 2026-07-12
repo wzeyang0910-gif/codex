@@ -34,4 +34,10 @@ describe("session tokens", () => {
 
     expect(verifySessionToken(token, { secret, now: new Date("2026-07-12T00:01:01Z") })).toBeNull();
   });
+
+  it("rejects a token at its exact expiration second", () => {
+    const token = signSessionToken(payload, { secret, expiresInSeconds: 60, now: new Date("2026-07-12T00:00:00Z") });
+
+    expect(verifySessionToken(token, { secret, now: new Date("2026-07-12T00:01:00Z") })).toBeNull();
+  });
 });

@@ -73,7 +73,7 @@ export function verifySessionToken(token: string, options: VerifySessionTokenOpt
       typeof payload.email !== "string" ||
       (payload.role !== "admin" && payload.role !== "sales") ||
       typeof payload.exp !== "number" ||
-      payload.exp < nowSeconds
+      payload.exp <= nowSeconds
     ) {
       return null;
     }

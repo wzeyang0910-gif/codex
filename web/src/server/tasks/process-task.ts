@@ -148,21 +148,26 @@ export function taskStatusForDeliveredCount(deliveredCount: number, targetCount:
   return deliveredCount >= targetCount ? "completed" : "partial";
 }
 
+function isPrismaP2002(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
+
 export async function processLeadTask(taskId: string, dependencies: ProcessLeadTaskDependencies = {}): Promise<void> {
   const taskPrisma = dependencies.prisma ?? (defaultPrisma as unknown as TaskProcessingPrisma);
   const now = dependencies.now ?? (() => new Date());
-  const task = await taskPrisma.leadTask.findUnique({ where: { id: taskId } });
-
-  if (!task) {
-    return;
-  }
-
-  await taskPrisma.leadTask.update({
-    where: { id: taskId },
-    data: { status: "running", startedAt: now() }
-  });
 
   try {
+    const task = await taskPrisma.leadTask.findUnique({ where: { id: taskId } });
+
+    if (!task) {
+      return;
+    }
+
+    await taskPrisma.leadTask.update({
+      where: { id: taskId },
+      data: { status: "running", startedAt: now() }
+    });
+
     const existingCompanies = await taskPrisma.company.findMany({
       select: { normalizedName: true, domain: true, country: true, region: true }
     });
@@ -180,27 +185,43 @@ export async function processLeadTask(taskId: string, dependencies: ProcessLeadT
       adapters
     );
     const deliveredAt = now();
+    let deliveredCount = 0;
+    let duplicateCount = 0;
 
     for (const lead of result.delivered) {
-      await taskPrisma.company.create({
-        data: buildCompanyCreateData(task, lead, deliveredAt)
-      });
+      try {
+        await taskPrisma.company.create({
+          data: buildCompanyCreateData(task, lead, deliveredAt)
+        });
+        deliveredCount += 1;
+      } catch (error) {
+        if (isPrismaP2002(error)) {
+          duplicateCount += 1;
+          continue;
+        }
+
+        throw error;
+      }
     }
 
     await taskPrisma.leadTask.update({
       where: { id: taskId },
       data: {
-        status: taskStatusForDeliveredCount(result.delivered.length, task.targetCount),
-        deliveredCount: result.delivered.length,
+        status: taskStatusForDeliveredCount(deliveredCount, task.targetCount),
+        deliveredCount,
         searchedCount: result.searchedCount,
-        rejectedCount: result.rejected.length,
+        rejectedCount: result.rejected.length + duplicateCount,
         completedAt: now()
       }
     });
   } catch {
-    await taskPrisma.leadTask.update({
-      where: { id: taskId },
-      data: { status: "failed", completedAt: now() }
-    });
+    try {
+      await taskPrisma.leadTask.update({
+        where: { id: taskId },
+        data: { status: "failed", completedAt: now() }
+      });
+    } catch {
+      // A failed-status update is best effort; this worker must never reject outward.
+    }
   }
 }

@@ -5,6 +5,11 @@ import { getSessionFromRequest, ownershipDecision } from "@/lib/session";
 
 export async function PATCH(request: Request, context: { params: Promise<{ customerId: string }> }) {
   const user = getSessionFromRequest(request);
+
+  if (!user) {
+    return NextResponse.json({ error: "请先登录" }, { status: 401 });
+  }
+
   const { customerId } = await context.params;
   const payload = await request.json().catch(() => null);
   const parsed = UpdateCustomerSchema.safeParse(payload);

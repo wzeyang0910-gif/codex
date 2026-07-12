@@ -4,6 +4,11 @@ import { getSessionFromRequest, ownershipDecision } from "@/lib/session";
 
 export async function GET(request: Request, context: { params: Promise<{ taskId: string }> }) {
   const user = getSessionFromRequest(request);
+
+  if (!user) {
+    return NextResponse.json({ error: "请先登录" }, { status: 401 });
+  }
+
   const { taskId } = await context.params;
   const task = await prisma.leadTask.findUnique({
     where: { id: taskId },
