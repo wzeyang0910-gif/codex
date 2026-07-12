@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Yonye Lead Platform",
-  description: "Internal lead generation platform for Yonye Medical"
+  title: "原研获客平台",
+  description: "原研医疗内部获客与客户管理工具"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

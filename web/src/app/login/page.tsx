@@ -1,8 +1,11 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { LogIn } from "lucide-react";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("sales@cnyonye.local");
   const [password, setPassword] = useState("123456");
   const [message, setMessage] = useState("");
@@ -27,7 +30,8 @@ export default function LoginPage() {
       return;
     }
 
-    setMessage(`欢迎，${data.user?.name ?? "用户"}（${data.user?.role ?? ""}）`);
+    setMessage(`欢迎，${data.user?.name ?? "用户"}。正在进入任务创建页...`);
+    router.replace("/tasks/new");
   }
 
   return (
@@ -36,9 +40,7 @@ export default function LoginPage() {
         <div>
           <p className="login-eyebrow">常州原研医疗内部系统</p>
           <h1 id="login-title">内部获客平台登录</h1>
-          <p className="login-copy">
-            仅供公司内部管理员和业务员使用。本地种子账号可直接用于验证 MVP 流程。
-          </p>
+          <p className="login-copy">仅供公司内部管理员和业务员使用。登录后可创建获客任务、查看结果并维护客户跟进。</p>
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>
@@ -64,7 +66,10 @@ export default function LoginPage() {
             />
           </label>
 
-          <button type="submit">登录</button>
+          <button className="button" type="submit">
+            <LogIn aria-hidden="true" size={16} />
+            登录
+          </button>
           {message ? <p className="login-message">{message}</p> : null}
         </form>
 
