@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { signSessionToken } from "@/lib/session-token";
+import { shanghaiDayBounds } from "@/lib/shanghai-time";
 
 const mocks = vi.hoisted(() => ({
   after: vi.fn(),
@@ -165,16 +166,11 @@ describe("Task 7 protected routes", () => {
   });
 
   it("uses Asia/Shanghai UTC day bounds at both China-midnight edges", () => {
-    const shanghaiDayBounds = (TaskRoute as unknown as {
-      shanghaiDayBounds?: (now: Date) => { start: Date; end: Date };
-    }).shanghaiDayBounds;
-
-    expect(shanghaiDayBounds).toBeTypeOf("function");
-    expect(shanghaiDayBounds!(new Date("2026-07-12T15:59:59.999Z"))).toEqual({
+    expect(shanghaiDayBounds(new Date("2026-07-12T15:59:59.999Z"))).toEqual({
       start: new Date("2026-07-11T16:00:00.000Z"),
       end: new Date("2026-07-12T16:00:00.000Z")
     });
-    expect(shanghaiDayBounds!(new Date("2026-07-12T16:00:00.000Z"))).toEqual({
+    expect(shanghaiDayBounds(new Date("2026-07-12T16:00:00.000Z"))).toEqual({
       start: new Date("2026-07-12T16:00:00.000Z"),
       end: new Date("2026-07-13T16:00:00.000Z")
     });
