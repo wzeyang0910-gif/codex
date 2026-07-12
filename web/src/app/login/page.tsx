@@ -9,29 +9,44 @@ export default function LoginPage() {
   const [email, setEmail] = useState("sales@cnyonye.local");
   const [password, setPassword] = useState("123456");
   const [message, setMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setIsSubmitting(true);
     setMessage("正在登录...");
 
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password })
-    });
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
 
-    const data = (await response.json()) as {
-      user?: { name: string; role: string };
-      error?: string;
-    };
+      let data: {
+        user?: { name: string; role: string };
+        error?: string;
+      };
 
-    if (!response.ok) {
-      setMessage(data.error ?? "登录失败");
-      return;
+      try {
+        data = (await response.json()) as typeof data;
+      } catch {
+        setMessage("服务器响应格式异常，请稍后重试");
+        return;
+      }
+
+      if (!response.ok) {
+        setMessage(data.error ?? "登录失败");
+        return;
+      }
+
+      setMessage(`欢迎，${data.user?.name ?? "用户"}。正在进入任务创建页...`);
+      router.replace("/tasks/new");
+    } catch {
+      setMessage("网络异常，请稍后重试");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    setMessage(`欢迎，${data.user?.name ?? "用户"}。正在进入任务创建页...`);
-    router.replace("/tasks/new");
   }
 
   return (
@@ -66,11 +81,15 @@ export default function LoginPage() {
             />
           </label>
 
-          <button className="button" type="submit">
+          <button className="button" disabled={isSubmitting} type="submit">
             <LogIn aria-hidden="true" size={16} />
             登录
           </button>
-          {message ? <p className="login-message">{message}</p> : null}
+          {message ? (
+            <p aria-live="polite" className="login-message" role="status">
+              {message}
+            </p>
+          ) : null}
         </form>
 
         <div className="login-seeds" aria-label="本地种子账号">

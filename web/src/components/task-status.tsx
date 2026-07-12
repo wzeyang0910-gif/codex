@@ -17,10 +17,14 @@ type LeadTask = {
   deliveredCount: number;
   searchedCount: number;
   rejectedCount: number;
-  companies: CustomerCardCustomer[];
+  companies: Array<CustomerCardCustomer & { isDelivered: boolean }>;
 };
 
 const terminalStatuses = new Set(["completed", "partial", "failed"]);
+
+function isRecoverableHttpError(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
 
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
@@ -71,8 +75,20 @@ export function TaskStatus({ taskId }: { taskId: string }) {
           return;
         }
 
-        if (!response.ok || !data.task) {
-          setError(data.error ?? "任务读取失败");
+        if (!response.ok) {
+          const message = data.error ?? "任务读取失败";
+
+          if (isRecoverableHttpError(response.status)) {
+            setError(`${message}，稍后自动重试`);
+            timer = setTimeout(load, 4000);
+          } else {
+            setError(message);
+          }
+          return;
+        }
+
+        if (!data.task) {
+          setError("任务读取失败");
           return;
         }
 
@@ -104,7 +120,7 @@ export function TaskStatus({ taskId }: { taskId: string }) {
   }, [taskId]);
 
   const deliveredCustomers = useMemo(
-    () => task?.companies.filter((company) => company.grade !== "C" && company.grade !== "rejected") ?? [],
+    () => task?.companies.filter((company) => company.isDelivered && (company.grade === "A" || company.grade === "B")) ?? [],
     [task]
   );
 
