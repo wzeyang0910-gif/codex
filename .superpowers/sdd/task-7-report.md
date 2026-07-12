@@ -85,3 +85,32 @@ Implemented Task and Customer API routes with signed HttpOnly session cookies, o
 - `processLeadTask` guards lookup, initial status, pipeline, persistence, final status, and its best-effort failed-status update so it never rejects outward.
 - Prisma `P2002` is counted as a per-company rejection, preserving other creates and deriving the final status/counts from actual successful creates.
 - The post-response callback catches any unexpected worker rejection without logging request/session material.
+
+## Final Authorization and Quota Reservation Fix
+
+### RED
+
+- `npm test -- tests/api/task-routes.test.ts`
+  - 10 tests ran; 4 new regression tests failed and 6 existing tests passed.
+  - An authenticated non-owner with `{}` received `400` instead of `403` before any update.
+  - Twenty delivered customers plus one queued five-customer task returned `remaining: 5` instead of `remaining: 0`.
+  - Task creation did not call a Serializable Prisma transaction.
+  - A simulated Prisma `P2034` serialization conflict returned `200` rather than a readable `409` retry response.
+
+### GREEN
+
+- `npm test -- tests/api/task-routes.test.ts`
+  - 1 file passed; 10 tests passed.
+- `npm test -- tests/api/task-contract.test.ts tests/api/task-routes.test.ts tests/unit/session-token.test.ts tests/unit/task-processing.test.ts`
+  - 4 files passed; 27 tests passed.
+- `npm test`
+  - 15 files passed; 69 tests passed.
+- `npm run typecheck`
+  - TypeScript exited with code 0.
+
+### Final Fixes
+
+- Customer PATCH now follows session -> customer lookup -> ownership decision -> body parsing and validation -> update.
+- Task creation now counts delivered customers and queued/running task reservations inside one `Serializable` Prisma transaction before creating the queued task.
+- Only queued and running tasks reserve their `targetCount`; completed, partial, and failed tasks are excluded because delivered companies are counted directly.
+- Quota denial remains `429`; Prisma `P2034` returns `409` with a retry message and does not schedule post-response processing.

@@ -4,7 +4,9 @@ import { signSessionToken } from "@/lib/session-token";
 const mocks = vi.hoisted(() => ({
   after: vi.fn(),
   processLeadTask: vi.fn(),
+  transaction: vi.fn(),
   countCompanies: vi.fn(),
+  aggregateTasks: vi.fn(),
   createTask: vi.fn(),
   findTask: vi.fn(),
   findCompany: vi.fn(),
@@ -18,8 +20,10 @@ vi.mock("next/server", async () => {
 
 vi.mock("@/lib/db", () => ({
   prisma: {
+    $transaction: mocks.transaction,
     leadTask: {
       create: mocks.createTask,
+      aggregate: mocks.aggregateTasks,
       findUnique: mocks.findTask
     },
     company: {
@@ -57,7 +61,7 @@ function requestFor(user: typeof owner, input: RequestInit = {}): Request {
 describe("Task 7 protected routes", () => {
   beforeEach(() => {
     process.env.SESSION_SECRET = secret;
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it("returns 401 before loading a task when the request has no session", async () => {
@@ -99,6 +103,67 @@ describe("Task 7 protected routes", () => {
     expect(mocks.updateCompany).not.toHaveBeenCalled();
   });
 
+  it("returns 403 before validating an empty update from another sales user", async () => {
+    mocks.findCompany.mockResolvedValue({ ownerId: owner.id });
+
+    const response = await PATCH(requestFor(otherSalesUser, { method: "PATCH", body: JSON.stringify({}) }), {
+      params: Promise.resolve({ customerId: "customer_1" })
+    });
+
+    expect(response.status).toBe(403);
+    expect(mocks.updateCompany).not.toHaveBeenCalled();
+  });
+
+  it("reduces remaining quota by today's queued task reservations", async () => {
+    mocks.countCompanies.mockResolvedValue(20);
+    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 5 } });
+    mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        company: { count: mocks.countCompanies },
+        leadTask: { aggregate: mocks.aggregateTasks, create: mocks.createTask }
+      })
+    );
+
+    const response = await TaskRoute.POST(
+      requestFor(owner, { method: "POST", body: JSON.stringify(validTaskPayload) })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ remaining: 0 });
+  });
+
+  it("creates the task inside a Serializable transaction", async () => {
+    mocks.countCompanies.mockResolvedValue(0);
+    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 0 } });
+    mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        company: { count: mocks.countCompanies },
+        leadTask: { aggregate: mocks.aggregateTasks, create: mocks.createTask }
+      })
+    );
+
+    await TaskRoute.POST(requestFor(owner, { method: "POST", body: JSON.stringify(validTaskPayload) }));
+
+    expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "Serializable" });
+    expect(mocks.createTask).toHaveBeenCalledOnce();
+  });
+
+  it("returns a retry response without scheduling work when the reservation transaction conflicts", async () => {
+    mocks.countCompanies.mockResolvedValue(0);
+    mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
+    mocks.transaction.mockRejectedValue(Object.assign(new Error("serialization conflict"), { code: "P2034" }));
+
+    const response = await TaskRoute.POST(
+      requestFor(owner, { method: "POST", body: JSON.stringify(validTaskPayload) })
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "任务创建冲突，请稍后重试" });
+    expect(mocks.after).not.toHaveBeenCalled();
+  });
+
   it("uses Asia/Shanghai UTC day bounds at both China-midnight edges", () => {
     const shanghaiDayBounds = (TaskRoute as unknown as {
       shanghaiDayBounds?: (now: Date) => { start: Date; end: Date };
@@ -118,7 +183,14 @@ describe("Task 7 protected routes", () => {
   it("absorbs a rejected post-response task callback", async () => {
     let callback: (() => unknown) | undefined;
     mocks.countCompanies.mockResolvedValue(0);
+    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 0 } });
     mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
+    mocks.transaction.mockImplementation(async (scheduled: (tx: unknown) => Promise<unknown>) =>
+      scheduled({
+        company: { count: mocks.countCompanies },
+        leadTask: { aggregate: mocks.aggregateTasks, create: mocks.createTask }
+      })
+    );
     mocks.after.mockImplementation((scheduled: () => unknown) => {
       callback = scheduled;
     });

@@ -11,13 +11,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ custo
   }
 
   const { customerId } = await context.params;
-  const payload = await request.json().catch(() => null);
-  const parsed = UpdateCustomerSchema.safeParse(payload);
-
-  if (!parsed.success) {
-    return NextResponse.json({ error: "客户更新内容不正确" }, { status: 400 });
-  }
-
   const existingCustomer = await prisma.company.findUnique({
     where: { id: customerId },
     select: { ownerId: true }
@@ -30,6 +23,13 @@ export async function PATCH(request: Request, context: { params: Promise<{ custo
   const decision = ownershipDecision(user, existingCustomer.ownerId);
   if (!decision.allowed) {
     return NextResponse.json({ error: decision.status === 401 ? "请先登录" : "无权更新该客户" }, { status: decision.status });
+  }
+
+  const payload = await request.json().catch(() => null);
+  const parsed = UpdateCustomerSchema.safeParse(payload);
+
+  if (!parsed.success) {
+    return NextResponse.json({ error: "客户更新内容不正确" }, { status: 400 });
   }
 
   const customer = await prisma.company.update({
