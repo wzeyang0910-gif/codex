@@ -1,6 +1,6 @@
 import React from "react";
 import Link from "next/link";
-import { LogOut, Users, ClipboardList, PlusCircle } from "lucide-react";
+import { Gauge, LogOut, Users, ClipboardList, PlusCircle } from "lucide-react";
 import type { SessionUser } from "@/lib/auth";
 
 export function AppShell({ children, user }: { children: React.ReactNode; user: SessionUser }) {
@@ -19,6 +19,12 @@ export function AppShell({ children, user }: { children: React.ReactNode; user: 
             <Users aria-hidden="true" size={16} />
             客户库
           </Link>
+          {user.role === "admin" ? (
+            <Link href={{ pathname: "/admin" }}>
+              <Gauge aria-hidden="true" size={16} />
+              管理员监控
+            </Link>
+          ) : null}
           <span className="nav-user" title={user.email}>
             <ClipboardList aria-hidden="true" size={16} />
             {user.name} · {user.role === "admin" ? "管理员" : "业务员"}

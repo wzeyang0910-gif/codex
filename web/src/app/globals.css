@@ -338,7 +338,7 @@ textarea {
 
 .check-row {
   grid-template-columns: 18px 1fr;
-  align-items: start;
+  align-items: flex-start;
   min-height: 44px;
   padding: 10px;
   border: 1px solid var(--line);
@@ -390,7 +390,7 @@ textarea {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 14px;
-  align-items: start;
+  align-items: flex-start;
 }
 
 .customer-card h2 {
@@ -670,6 +670,112 @@ textarea {
   align-items: start;
 }
 
+.admin-alerts {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.admin-section {
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+}
+
+.admin-section + .admin-section {
+  margin-top: 4px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.section-heading h2,
+.permission-state h1 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.section-heading p,
+.permission-state p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.admin-metric-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 0;
+}
+
+.compact-table-scroll {
+  width: min(440px, 100%);
+}
+
+.compact-table {
+  min-width: 520px;
+}
+
+.compact-table-scroll .compact-table {
+  min-width: 360px;
+}
+
+.api-config-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.api-config-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.config-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.configured {
+  color: var(--success);
+}
+
+.not-configured {
+  color: var(--muted);
+}
+
+.permission-state {
+  display: flex;
+  align-items: start;
+  gap: 10px;
+  max-width: 560px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.permission-state > svg {
+  flex: 0 0 auto;
+  color: var(--danger);
+}
+
 .edit-panel {
   position: sticky;
   top: 72px;
@@ -709,7 +815,8 @@ textarea {
   .info-grid,
   .choice-grid,
   .criteria-list,
-  .metric-grid {
+  .metric-grid,
+  .api-config-list {
     grid-template-columns: 1fr;
   }
 
