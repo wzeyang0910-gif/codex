@@ -56,7 +56,9 @@ export function selectQualifyingContacts(contacts: FoundContact[]): FoundContact
         (contact.emailStatus === "valid" || contact.emailStatus === "accept_all")
     )
     .sort((left, right) => {
+      const rankDifference = (titleRank(left.title) ?? Number.MAX_SAFE_INTEGER) - (titleRank(right.title) ?? Number.MAX_SAFE_INTEGER);
+      if (rankDifference !== 0) return rankDifference;
       if (left.isPrimary !== right.isPrimary) return left.isPrimary ? -1 : 1;
-      return (titleRank(left.title) ?? Number.MAX_SAFE_INTEGER) - (titleRank(right.title) ?? Number.MAX_SAFE_INTEGER);
+      return 0;
     });
 }

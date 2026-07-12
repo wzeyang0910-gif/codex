@@ -53,10 +53,6 @@ function estimateCompanySizeFit(company: CandidateCompany) {
   return /network|wholesale|trading|supplies|distributor|supplier/i.test(company.name + company.customerType) ? 82 : 65;
 }
 
-function displayRiskNotes(bestEmailStatus: "valid" | "accept_all" | "risky" | "unknown" | "invalid"): string[] {
-  return bestEmailStatus === "accept_all" ? ["邮箱为 accept_all 域名，建议联系前确认"] : [];
-}
-
 export async function runLeadPipeline(input: RunLeadPipelineInput, adapters: AdapterSet): Promise<PipelineResult> {
   const marketSummary = buildMarketResearchSummary(input);
   const candidates = await adapters.search.searchCompanies({
@@ -121,7 +117,7 @@ export async function runLeadPipeline(input: RunLeadPipelineInput, adapters: Ada
       grade: score.grade,
       score: score.score,
       scoreBreakdown: score.breakdown,
-      riskNotes: displayRiskNotes(bestEmailStatus),
+      riskNotes: score.riskNotes,
       recommendedProducts,
       outreach
     });

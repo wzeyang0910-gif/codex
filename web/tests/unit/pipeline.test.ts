@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createMockAdapterSet } from "@/server/adapters/mock";
+import { scoreLead } from "@/lib/scoring";
 import type { AdapterSet, CandidateCompany, FoundContact } from "@/server/adapters/types";
 import { runLeadPipeline } from "@/server/lead-engine/pipeline";
 
@@ -134,5 +135,39 @@ describe("lead pipeline", () => {
       "Wound Plaster Series"
     ]);
     expect(result.delivered[0]?.outreach.body).toContain("Kinesiology Tape Series");
+  });
+
+  it("prioritizes a non-primary Owner and addresses them in outreach", async () => {
+    const candidate = company("Owner Priority Medical");
+    const result = await runLeadPipeline(
+      input,
+      adaptersFor([candidate], [[
+        contact({ name: "Nora Procurement", title: "Procurement Manager", isPrimary: true }),
+        contact({ name: "Layla Owner", title: "Owner", isPrimary: false })
+      ]])
+    );
+
+    expect(result.delivered[0]?.contacts[0]?.name).toBe("Layla Owner");
+    expect(result.delivered[0]?.outreach.body).toContain("Layla Owner");
+  });
+
+  it("keeps scoreLead's accept-all grade and readable risk note", async () => {
+    const candidate = company("Accept All Medical");
+    const result = await runLeadPipeline(
+      input,
+      adaptersFor([candidate], [[contact({ emailStatus: "accept_all" })]])
+    );
+    const expectedScore = scoreLead({
+      productFit: 88,
+      demandEvidenceCount: candidate.demandSignals.length,
+      hasImportEvidence: true,
+      hasKeyPerson: true,
+      bestEmailStatus: "accept_all",
+      companySizeFit: 65
+    });
+
+    expect(result.delivered[0]?.grade).toBe("B");
+    expect(result.delivered[0]?.riskNotes).toEqual(expectedScore.riskNotes);
+    expect(result.delivered[0]?.riskNotes[0]).toContain("accept-all");
   });
 });
