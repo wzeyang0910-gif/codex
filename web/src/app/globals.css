@@ -667,7 +667,7 @@ textarea {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: 14px;
-  align-items: start;
+  align-items: flex-start;
 }
 
 .admin-alerts {
@@ -687,7 +687,7 @@ textarea {
 
 .section-heading {
   display: flex;
-  align-items: start;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 12px;
@@ -762,7 +762,7 @@ textarea {
 
 .permission-state {
   display: flex;
-  align-items: start;
+  align-items: flex-start;
   gap: 10px;
   max-width: 560px;
   padding: 16px;
