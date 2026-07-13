@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   try {
     reservation = await prisma.$transaction(
       async (transaction) => {
-        const [deliveredToday, pendingTasks] = await Promise.all([
+        const [deliveredToday, activeTasks] = await Promise.all([
           transaction.company.count({
             where: {
               ownerId: user.id,
@@ -44,18 +44,22 @@ export async function POST(request: Request) {
               deliveredAt: { gte: start, lt: end }
             }
           }),
-          transaction.leadTask.aggregate({
+          transaction.leadTask.findMany({
             where: {
               userId: user.id,
-              status: { in: ["queued", "running"] },
-              createdAt: { gte: start, lt: end }
+              status: { in: ["queued", "running"] }
             },
-            _sum: { targetCount: true, deliveredCount: true }
+            select: {
+              targetCount: true,
+              _count: {
+                select: { companies: { where: { isDelivered: true } } }
+              }
+            }
           })
         ]);
-        const pendingReservation = Math.max(
-          0,
-          (pendingTasks._sum.targetCount ?? 0) - (pendingTasks._sum.deliveredCount ?? 0)
+        const pendingReservation = activeTasks.reduce(
+          (total, task) => total + Math.max(0, task.targetCount - task._count.companies),
+          0
         );
         const quota = canCreateTask(deliveredToday + pendingReservation, REQUESTED_COUNT);
 

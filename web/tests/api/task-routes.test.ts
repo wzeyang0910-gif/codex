@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   processLeadTask: vi.fn(),
   transaction: vi.fn(),
   countCompanies: vi.fn(),
-  aggregateTasks: vi.fn(),
+  findActiveTasks: vi.fn(),
   createTask: vi.fn(),
   findTask: vi.fn(),
   findCompany: vi.fn(),
@@ -24,7 +24,7 @@ vi.mock("@/lib/db", () => ({
     $transaction: mocks.transaction,
     leadTask: {
       create: mocks.createTask,
-      aggregate: mocks.aggregateTasks,
+      findMany: mocks.findActiveTasks,
       findUnique: mocks.findTask
     },
     company: {
@@ -117,12 +117,12 @@ describe("Task 7 protected routes", () => {
 
   it("allows a task at the 30-customer boundary when a running 3/5 task only reserves 2", async () => {
     mocks.countCompanies.mockResolvedValue(23);
-    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 5, deliveredCount: 3 } });
+    mocks.findActiveTasks.mockResolvedValue([{ targetCount: 5, _count: { companies: 3 } }]);
     mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         company: { count: mocks.countCompanies },
-        leadTask: { aggregate: mocks.aggregateTasks, create: mocks.createTask }
+        leadTask: { findMany: mocks.findActiveTasks, create: mocks.createTask }
       })
     );
 
@@ -132,18 +132,73 @@ describe("Task 7 protected routes", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ remaining: 0 });
-    expect(mocks.aggregateTasks).toHaveBeenCalledWith(
-      expect.objectContaining({ _sum: { targetCount: true, deliveredCount: true } })
+    expect(mocks.findActiveTasks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: {
+          targetCount: true,
+          _count: { select: { companies: { where: { isDelivered: true } } } }
+        }
+      })
     );
+  });
+
+  it("does not reserve running-task deliveries twice while deliveredCount is stale", async () => {
+    mocks.countCompanies.mockResolvedValue(23);
+    mocks.findActiveTasks.mockResolvedValue([{ targetCount: 5, _count: { companies: 3 } }]);
+    mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        company: { count: mocks.countCompanies },
+        leadTask: {
+          findMany: mocks.findActiveTasks,
+          create: mocks.createTask
+        }
+      })
+    );
+
+    const response = await TaskRoute.POST(
+      requestFor(owner, { method: "POST", body: JSON.stringify(validTaskPayload) })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ remaining: 0 });
+  });
+
+  it("reserves unfinished work from active tasks created before today", async () => {
+    mocks.countCompanies.mockResolvedValue(21);
+    mocks.findActiveTasks.mockResolvedValue([{ targetCount: 5, _count: { companies: 0 } }]);
+    mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        company: { count: mocks.countCompanies },
+        leadTask: {
+          findMany: mocks.findActiveTasks,
+          create: mocks.createTask
+        }
+      })
+    );
+
+    const response = await TaskRoute.POST(
+      requestFor(owner, { method: "POST", body: JSON.stringify(validTaskPayload) })
+    );
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({ remaining: 4 });
+    expect(mocks.findActiveTasks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: owner.id, status: { in: ["queued", "running"] } }
+      })
+    );
+    expect(mocks.createTask).not.toHaveBeenCalled();
   });
 
   it("rejects a task that would reach 31 when a running 3/5 task only reserves 2", async () => {
     mocks.countCompanies.mockResolvedValue(24);
-    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 5, deliveredCount: 3 } });
+    mocks.findActiveTasks.mockResolvedValue([{ targetCount: 5, _count: { companies: 3 } }]);
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         company: { count: mocks.countCompanies },
-        leadTask: { aggregate: mocks.aggregateTasks, create: mocks.createTask }
+        leadTask: { findMany: mocks.findActiveTasks, create: mocks.createTask }
       })
     );
 
@@ -158,12 +213,12 @@ describe("Task 7 protected routes", () => {
 
   it("defensively treats a negative pending reservation as zero", async () => {
     mocks.countCompanies.mockResolvedValue(25);
-    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 2, deliveredCount: 3 } });
+    mocks.findActiveTasks.mockResolvedValue([{ targetCount: 2, _count: { companies: 3 } }]);
     mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         company: { count: mocks.countCompanies },
-        leadTask: { aggregate: mocks.aggregateTasks, create: mocks.createTask }
+        leadTask: { findMany: mocks.findActiveTasks, create: mocks.createTask }
       })
     );
 
@@ -177,12 +232,12 @@ describe("Task 7 protected routes", () => {
 
   it("creates the task inside a Serializable transaction", async () => {
     mocks.countCompanies.mockResolvedValue(0);
-    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 0, deliveredCount: 0 } });
+    mocks.findActiveTasks.mockResolvedValue([]);
     mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
         company: { count: mocks.countCompanies },
-        leadTask: { aggregate: mocks.aggregateTasks, create: mocks.createTask }
+        leadTask: { findMany: mocks.findActiveTasks, create: mocks.createTask }
       })
     );
 
@@ -220,12 +275,12 @@ describe("Task 7 protected routes", () => {
   it("absorbs a rejected post-response task callback", async () => {
     let callback: (() => unknown) | undefined;
     mocks.countCompanies.mockResolvedValue(0);
-    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 0, deliveredCount: 0 } });
+    mocks.findActiveTasks.mockResolvedValue([]);
     mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
     mocks.transaction.mockImplementation(async (scheduled: (tx: unknown) => Promise<unknown>) =>
       scheduled({
         company: { count: mocks.countCompanies },
-        leadTask: { aggregate: mocks.aggregateTasks, create: mocks.createTask }
+        leadTask: { findMany: mocks.findActiveTasks, create: mocks.createTask }
       })
     );
     mocks.after.mockImplementation((scheduled: () => unknown) => {
