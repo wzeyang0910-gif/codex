@@ -1,6 +1,6 @@
 import React from "react";
 import { AlertTriangle, CheckCircle2, CircleOff } from "lucide-react";
-import { redirect } from "next/navigation";
+import { forbidden, redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { adminAccessDecision, type AdminTaskStatus } from "@/lib/admin-metrics";
 import { loadAdminMetrics } from "@/lib/admin-metrics-server";
@@ -25,17 +25,7 @@ export default async function AdminPage() {
       redirect("/login");
     }
 
-    return (
-      <AppShell user={user}>
-        <section className="permission-state" aria-labelledby="permission-title">
-          <CircleOff aria-hidden="true" size={22} />
-          <div>
-            <h1 id="permission-title">权限不足</h1>
-            <p>管理员监控仅对管理员开放。</p>
-          </div>
-        </section>
-      </AppShell>
-    );
+    forbidden();
   }
 
   if (!user) {

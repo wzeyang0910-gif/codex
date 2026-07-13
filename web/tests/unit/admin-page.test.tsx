@@ -7,6 +7,9 @@ import { AppShell } from "@/components/app-shell";
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
   loadAdminMetrics: vi.fn(),
+  forbidden: vi.fn(() => {
+    throw new Error("NEXT_FORBIDDEN");
+  }),
   redirect: vi.fn((path: string) => {
     throw new Error(`NEXT_REDIRECT:${path}`);
   })
@@ -16,7 +19,7 @@ vi.mock("@/lib/session-server", () => ({ getServerSession: mocks.getServerSessio
 vi.mock("@/lib/admin-metrics-server", () => ({ loadAdminMetrics: mocks.loadAdminMetrics }));
 vi.mock("next/navigation", async () => {
   const actual = await vi.importActual<typeof import("next/navigation")>("next/navigation");
-  return { ...actual, redirect: mocks.redirect };
+  return { ...actual, forbidden: mocks.forbidden, redirect: mocks.redirect };
 });
 
 import AdminPage from "@/app/admin/page";
@@ -54,13 +57,11 @@ describe("admin page authorization", () => {
     expect(mocks.loadAdminMetrics).not.toHaveBeenCalled();
   });
 
-  it("shows a forbidden state to sales without loading metrics", async () => {
+  it("returns the framework forbidden response to sales without loading metrics", async () => {
     mocks.getServerSession.mockResolvedValue(sales);
 
-    render(await AdminPage());
-
-    expect(screen.getByRole("heading", { name: "权限不足" })).toBeInTheDocument();
-    expect(screen.queryByText("接口总积分")).not.toBeInTheDocument();
+    await expect(AdminPage()).rejects.toThrow("NEXT_FORBIDDEN");
+    expect(mocks.forbidden).toHaveBeenCalledOnce();
     expect(mocks.loadAdminMetrics).not.toHaveBeenCalled();
   });
 
@@ -70,6 +71,7 @@ describe("admin page authorization", () => {
 
     render(await AdminPage());
 
+    expect(mocks.forbidden).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "管理员监控" })).toBeInTheDocument();
     expect(screen.getByText("55.6%")).toBeInTheDocument();
     expect(screen.getByText("18")).toBeInTheDocument();
