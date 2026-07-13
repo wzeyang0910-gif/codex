@@ -38,7 +38,7 @@ type TaskProcessingPrisma = {
     updateMany(args: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>;
   };
   company: {
-    findMany(args: { where: Record<string, unknown>; select: Record<string, unknown> }): Promise<ExistingCompany[]>;
+    findMany(args: { where: Record<string, unknown>; select: Record<string, unknown>; take: number }): Promise<ExistingCompany[]>;
     create(args: { data: ReturnType<typeof buildCompanyCreateData> }): Promise<unknown>;
     count(args: { where: { taskId: string; isDelivered: true } }): Promise<number>;
   };
@@ -58,6 +58,14 @@ export const STALE_RUNNING_TASK_MS = 15 * 60 * 1000;
 const GLOBAL_DEDUPE_RECALL_MULTIPLIER = 3;
 const GLOBAL_DEDUPE_RECALL_MAX = 100;
 const GLOBAL_DEDUPE_MAX_BATCHES = 10;
+const DATABASE_IDENTITY_CHUNK_SIZE = 50;
+
+type CandidateIdentity = {
+  kind: "name" | "domain";
+  value: string;
+  country: string;
+  region: string;
+};
 
 export type ProcessLeadTaskDependencies = {
   prisma?: TaskProcessingPrisma;
@@ -93,23 +101,43 @@ export function filterExistingCompanies(
   });
 }
 
-function existingCompanyWhere(candidates: CandidateCompany[]): Record<string, unknown> {
+function candidateIdentities(candidate: CandidateCompany): CandidateIdentity[] {
+  const identities: CandidateIdentity[] = [candidate.name, ...(candidate.brandNames ?? [])]
+    .map(normalizeCompanyName)
+    .filter(Boolean)
+    .map((value) => ({ kind: "name", value, country: candidate.country, region: candidate.region }));
+  const domain = extractDomain(candidate.website);
+  if (domain) identities.push({ kind: "domain", value: domain, country: candidate.country, region: candidate.region });
+  return identities;
+}
+
+function candidateIdentityKey(identity: CandidateIdentity): string {
+  const prefix = identity.kind === "domain" ? "domain:" : "";
+  return `${prefix}${identity.value}:${identity.country}:${identity.region}`;
+}
+
+function uniqueCandidateIdentities(candidates: CandidateCompany[]): CandidateIdentity[] {
+  const identities = new Map<string, CandidateIdentity>();
+  for (const candidate of candidates) {
+    for (const identity of candidateIdentities(candidate)) {
+      identities.set(candidateIdentityKey(identity), identity);
+    }
+  }
+  return [...identities.values()];
+}
+
+function existingCompanyWhere(identities: CandidateIdentity[]): Record<string, unknown> {
   const groups = new Map<string, { country: string; region: string; names: Set<string>; domains: Set<string> }>();
 
-  for (const candidate of candidates) {
-    const key = `${candidate.country}\u0000${candidate.region}`;
+  for (const identity of identities) {
+    const key = `${identity.country}\u0000${identity.region}`;
     const group = groups.get(key) ?? {
-      country: candidate.country,
-      region: candidate.region,
+      country: identity.country,
+      region: identity.region,
       names: new Set<string>(),
       domains: new Set<string>()
     };
-    [candidate.name, ...(candidate.brandNames ?? [])]
-      .map(normalizeCompanyName)
-      .filter(Boolean)
-      .forEach((name) => group.names.add(name));
-    const domain = extractDomain(candidate.website);
-    if (domain) group.domains.add(domain);
+    group[identity.kind === "name" ? "names" : "domains"].add(identity.value);
     groups.set(key, group);
   }
 
@@ -118,9 +146,9 @@ function existingCompanyWhere(candidates: CandidateCompany[]): Record<string, un
       const names = [...group.names];
       const domains = [...group.domains];
       return [
-        { normalizedName: { in: names }, country: group.country, region: group.region },
+        ...(names.length > 0 ? [{ normalizedName: { in: names }, country: group.country, region: group.region }] : []),
         ...(domains.length > 0 ? [{ domain: { in: domains }, country: group.country, region: group.region }] : []),
-        {
+        ...(names.length > 0 ? [{
           brands: {
             some: {
               normalizedName: { in: names },
@@ -128,10 +156,53 @@ function existingCompanyWhere(candidates: CandidateCompany[]): Record<string, un
               region: group.region
             }
           }
-        }
+        }] : [])
       ];
     })
   };
+}
+
+async function findExistingCompanies(
+  companyPrisma: TaskProcessingPrisma["company"],
+  candidates: CandidateCompany[]
+): Promise<ExistingCompany[]> {
+  const identities = uniqueCandidateIdentities(candidates);
+  const existingCompanies: ExistingCompany[] = [];
+
+  for (let offset = 0; offset < identities.length; offset += DATABASE_IDENTITY_CHUNK_SIZE) {
+    const chunk = identities.slice(offset, offset + DATABASE_IDENTITY_CHUNK_SIZE);
+    const nameCount = chunk.filter((identity) => identity.kind === "name").length;
+    const domainCount = chunk.length - nameCount;
+    // Schema uniqueness allows one legal-name and one brand match per name, and one match per domain.
+    existingCompanies.push(...await companyPrisma.findMany({
+      where: existingCompanyWhere(chunk),
+      select: {
+        normalizedName: true,
+        domain: true,
+        country: true,
+        region: true,
+        brands: { select: { normalizedName: true } }
+      },
+      take: nameCount * 2 + domainCount
+    }));
+  }
+
+  return existingCompanies;
+}
+
+function appendUniqueCandidates(
+  candidates: CandidateCompany[],
+  destination: CandidateCompany[],
+  seenIdentities: Set<string>,
+  limit: number
+): void {
+  for (const candidate of candidates) {
+    if (destination.length >= limit) return;
+    const identities = candidateIdentities(candidate);
+    if (identities.some((identity) => seenIdentities.has(candidateIdentityKey(identity)))) continue;
+    identities.forEach((identity) => seenIdentities.add(candidateIdentityKey(identity)));
+    destination.push(candidate);
+  }
 }
 
 function applyGlobalDedupe(
@@ -148,20 +219,17 @@ function applyGlobalDedupe(
         const candidates = (await adapters.search.searchCompanies(input)).slice(0, batchSize * GLOBAL_DEDUPE_MAX_BATCHES);
         if (candidates.length === 0) return [];
         const newCandidates: CandidateCompany[] = [];
+        const seenCandidateIdentities = new Set<string>();
 
         for (let offset = 0; offset < candidates.length && newCandidates.length < candidateLimit; offset += batchSize) {
           const batch = candidates.slice(offset, offset + batchSize);
-          const existingCompanies = await companyPrisma.findMany({
-            where: existingCompanyWhere(batch),
-            select: {
-              normalizedName: true,
-              domain: true,
-              country: true,
-              region: true,
-              brands: { select: { normalizedName: true } }
-            }
-          });
-          newCandidates.push(...filterExistingCompanies(batch, existingCompanies));
+          const existingCompanies = await findExistingCompanies(companyPrisma, batch);
+          appendUniqueCandidates(
+            filterExistingCompanies(batch, existingCompanies),
+            newCandidates,
+            seenCandidateIdentities,
+            candidateLimit
+          );
         }
 
         return newCandidates.slice(0, candidateLimit);

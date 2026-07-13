@@ -552,9 +552,9 @@ describe("task processing", () => {
       }
     });
 
-    expect(events).toEqual(["search", "existing-query"]);
-    expect(findMany.mock.calls[0]?.[0]).not.toHaveProperty("take");
-    const query = JSON.stringify(findMany.mock.calls[0]?.[0].where);
+    expect(events).toEqual(["search", "existing-query", "existing-query"]);
+    expect(findMany.mock.calls.every(([args]) => args.take > 0 && args.take <= 100)).toBe(true);
+    const query = JSON.stringify(findMany.mock.calls.map(([args]) => args.where));
     expect(query).toContain("candidate 30");
     expect(query).toContain("candidate-30.example");
     expect(query).toContain("brand 30");
@@ -622,7 +622,8 @@ describe("task processing", () => {
       }
     });
 
-    expect(findMany.mock.calls[0]?.[0]).not.toHaveProperty("take");
+    expect(findMany.mock.calls[0]?.[0].take).toBeGreaterThanOrEqual(unorderedMatches.length);
+    expect(findMany.mock.calls.every(([args]) => args.take > 0 && args.take <= 100)).toBe(true);
     expect(pipelineCandidates.map((company) => company.name)).not.toContain("Candidate 1");
   });
 
@@ -667,11 +668,119 @@ describe("task processing", () => {
       }
     });
 
-    expect(findMany).toHaveBeenCalledTimes(2);
-    expect(JSON.stringify(findMany.mock.calls[1]?.[0].where)).toContain("candidate 180");
+    expect(findMany.mock.calls.length).toBeGreaterThan(1);
+    expect(JSON.stringify(findMany.mock.calls.map(([args]) => args.where))).toContain("candidate 180");
     expect(pipelineCandidates).toHaveLength(80);
     expect(pipelineCandidates[0]?.name).toBe("Candidate 101");
     expect(pipelineCandidates.at(-1)?.name).toBe("Candidate 180");
+  });
+
+  it("deduplicates candidate identities across batches and continues filling the pipeline limit", async () => {
+    const repeatedCandidates = Array.from({ length: 30 }, (_, index) => {
+      if (index % 3 === 0) {
+        return candidate({ name: `Alpha Alias ${index}`, brandNames: ["Alpha Medical"], website: `https://alpha-${index}.example` });
+      }
+      if (index % 3 === 1) {
+        return candidate({ name: `Beta Alias ${index}`, brandNames: ["Beta Medical"], website: "https://beta.example" });
+      }
+      return candidate({ name: "Gamma Medical", brandNames: [`Gamma Alias ${index}`], website: `https://gamma-${index}.example` });
+    });
+    const candidates = [
+      ...repeatedCandidates,
+      candidate({ name: "Alpha Medical", website: "https://cross-batch-alpha.example" }),
+      ...Array.from({ length: 10 }, (_, index) => candidate({
+        name: `Fresh ${index + 1}`,
+        website: `https://fresh-${index + 1}.example`
+      }))
+    ];
+    const findMany = vi.fn(async () => []);
+    const prisma = {
+      leadTask: {
+        updateMany: async () => ({ count: 1 }),
+        findUnique: async () => task,
+        update: async () => ({})
+      },
+      company: { findMany, create: async () => ({}), count: async () => 0 },
+      $transaction: unusedTransaction
+    };
+    let pipelineCandidates: CandidateCompany[] = [];
+
+    await processLeadTask("task_1", {
+      prisma,
+      createAdapters: () => ({
+        search: { searchCompanies: async () => candidates },
+        contacts: { findContacts: async () => [] }
+      }),
+      runPipeline: async (_input, pipelineAdapters) => {
+        pipelineCandidates = await pipelineAdapters.search.searchCompanies({ region: "Middle East", countries: [], keywords: [], customerTypes: [] });
+        return { marketSummary: { summary: "", keywords: [], buyerConcerns: [] }, searchedCount: 0, delivered: [], alternates: [], rejected: [] };
+      }
+    });
+
+    expect(findMany.mock.calls.length).toBeGreaterThan(1);
+    expect(pipelineCandidates.map((company) => company.name)).toEqual([
+      "Alpha Alias 0",
+      "Beta Alias 1",
+      "Gamma Medical",
+      "Fresh 1",
+      "Fresh 2",
+      "Fresh 3",
+      "Fresh 4",
+      "Fresh 5",
+      "Fresh 6",
+      "Fresh 7"
+    ]);
+  });
+
+  it("chunks unbounded brand identities and merges complete bounded database matches", async () => {
+    const brandNames = Array.from({ length: 250 }, (_, index) => `Brand ${index + 1}`);
+    const candidates = [
+      candidate({ name: "Brand Heavy", brandNames, website: "https://brand-heavy.example" }),
+      candidate({ name: "Fresh Medical", website: "https://fresh.example" })
+    ];
+    const findMany = vi.fn(async (args: any) => {
+      const query = JSON.stringify(args.where);
+      return query.includes("brand 250")
+        ? [{ normalizedName: "other", domain: null, country: "Saudi Arabia", region: "Middle East", brands: [{ normalizedName: "brand 250" }] }]
+        : [];
+    });
+    const prisma = {
+      leadTask: {
+        updateMany: async () => ({ count: 1 }),
+        findUnique: async () => task,
+        update: async () => ({})
+      },
+      company: { findMany, create: async () => ({}), count: async () => 0 },
+      $transaction: unusedTransaction
+    };
+    let pipelineCandidates: CandidateCompany[] = [];
+
+    await processLeadTask("task_1", {
+      prisma,
+      createAdapters: () => ({
+        search: { searchCompanies: async () => candidates },
+        contacts: { findContacts: async () => [] }
+      }),
+      runPipeline: async (_input, pipelineAdapters) => {
+        pipelineCandidates = await pipelineAdapters.search.searchCompanies({ region: "Middle East", countries: [], keywords: [], customerTypes: [] });
+        return { marketSummary: { summary: "", keywords: [], buyerConcerns: [] }, searchedCount: 0, delivered: [], alternates: [], rejected: [] };
+      }
+    });
+
+    expect(findMany.mock.calls.length).toBeGreaterThan(1);
+    for (const [args] of findMany.mock.calls) {
+      const identityValues = new Set<string>();
+      for (const clause of args.where.OR as any[]) {
+        for (const value of clause.normalizedName?.in ?? clause.domain?.in ?? clause.brands?.some?.normalizedName?.in ?? []) {
+          identityValues.add(value);
+        }
+      }
+      expect(identityValues.size).toBeLessThanOrEqual(50);
+      expect(args.take).toBeGreaterThan(0);
+      expect(args.take).toBeLessThanOrEqual(100);
+    }
+    expect(findMany.mock.calls.some(([args]) => JSON.stringify(args.where).includes("brand 250"))).toBe(true);
+    expect(pipelineCandidates.map((company) => company.name)).toEqual(["Fresh Medical"]);
   });
 
   it("caps the global dedupe recall query and pipeline return", async () => {
@@ -703,8 +812,8 @@ describe("task processing", () => {
       }
     });
 
-    expect(findMany.mock.calls[0]?.[0]).not.toHaveProperty("take");
-    const query = JSON.stringify(findMany.mock.calls[0]?.[0].where);
+    expect(findMany.mock.calls.every(([args]) => args.take > 0 && args.take <= 100)).toBe(true);
+    const query = JSON.stringify(findMany.mock.calls.map(([args]) => args.where));
     expect(query).toContain("candidate 100");
     expect(query).not.toContain("candidate 101");
     expect(pipelineCandidates).toHaveLength(80);
