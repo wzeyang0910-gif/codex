@@ -41,7 +41,7 @@ import { PATCH } from "@/app/api/customers/[customerId]/route";
 import { GET } from "@/app/api/tasks/[taskId]/route";
 import * as TaskRoute from "@/app/api/tasks/route";
 
-const secret = "task-route-session-secret";
+const secret = "task-route-session-secret-at-least-32-characters";
 const owner = { id: "owner_1", name: "Owner", email: "owner@example.com", role: "sales" as const };
 const otherSalesUser = { id: "other_1", name: "Other", email: "other@example.com", role: "sales" as const };
 const validTaskPayload = {
@@ -115,9 +115,50 @@ describe("Task 7 protected routes", () => {
     expect(mocks.updateCompany).not.toHaveBeenCalled();
   });
 
-  it("reduces remaining quota by today's queued task reservations", async () => {
-    mocks.countCompanies.mockResolvedValue(20);
-    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 5 } });
+  it("allows a task at the 30-customer boundary when a running 3/5 task only reserves 2", async () => {
+    mocks.countCompanies.mockResolvedValue(23);
+    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 5, deliveredCount: 3 } });
+    mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        company: { count: mocks.countCompanies },
+        leadTask: { aggregate: mocks.aggregateTasks, create: mocks.createTask }
+      })
+    );
+
+    const response = await TaskRoute.POST(
+      requestFor(owner, { method: "POST", body: JSON.stringify(validTaskPayload) })
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ remaining: 0 });
+    expect(mocks.aggregateTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ _sum: { targetCount: true, deliveredCount: true } })
+    );
+  });
+
+  it("rejects a task that would reach 31 when a running 3/5 task only reserves 2", async () => {
+    mocks.countCompanies.mockResolvedValue(24);
+    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 5, deliveredCount: 3 } });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+      callback({
+        company: { count: mocks.countCompanies },
+        leadTask: { aggregate: mocks.aggregateTasks, create: mocks.createTask }
+      })
+    );
+
+    const response = await TaskRoute.POST(
+      requestFor(owner, { method: "POST", body: JSON.stringify(validTaskPayload) })
+    );
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({ remaining: 4 });
+    expect(mocks.createTask).not.toHaveBeenCalled();
+  });
+
+  it("defensively treats a negative pending reservation as zero", async () => {
+    mocks.countCompanies.mockResolvedValue(25);
+    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 2, deliveredCount: 3 } });
     mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
@@ -136,7 +177,7 @@ describe("Task 7 protected routes", () => {
 
   it("creates the task inside a Serializable transaction", async () => {
     mocks.countCompanies.mockResolvedValue(0);
-    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 0 } });
+    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 0, deliveredCount: 0 } });
     mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
@@ -179,7 +220,7 @@ describe("Task 7 protected routes", () => {
   it("absorbs a rejected post-response task callback", async () => {
     let callback: (() => unknown) | undefined;
     mocks.countCompanies.mockResolvedValue(0);
-    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 0 } });
+    mocks.aggregateTasks.mockResolvedValue({ _sum: { targetCount: 0, deliveredCount: 0 } });
     mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
     mocks.transaction.mockImplementation(async (scheduled: (tx: unknown) => Promise<unknown>) =>
       scheduled({

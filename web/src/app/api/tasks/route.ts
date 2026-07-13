@@ -50,10 +50,14 @@ export async function POST(request: Request) {
               status: { in: ["queued", "running"] },
               createdAt: { gte: start, lt: end }
             },
-            _sum: { targetCount: true }
+            _sum: { targetCount: true, deliveredCount: true }
           })
         ]);
-        const quota = canCreateTask(deliveredToday + (pendingTasks._sum.targetCount ?? 0), REQUESTED_COUNT);
+        const pendingReservation = Math.max(
+          0,
+          (pendingTasks._sum.targetCount ?? 0) - (pendingTasks._sum.deliveredCount ?? 0)
+        );
+        const quota = canCreateTask(deliveredToday + pendingReservation, REQUESTED_COUNT);
 
         if (!quota.allowed) {
           return { quota };
