@@ -17,6 +17,16 @@ describe("LoginPage", () => {
     vi.stubGlobal("React", React);
   });
 
+  it("默认不填充或展示任何登录凭据，并提示联系管理员", () => {
+    render(<LoginPage />);
+
+    expect(screen.getByRole("textbox", { name: "邮箱" })).toHaveValue("");
+    expect(screen.getByLabelText("密码")).toHaveValue("");
+    expect(screen.getByText("请联系管理员获取账号")).toBeInTheDocument();
+    expect(screen.queryByText(/@cnyonye\.local/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/123456/)).not.toBeInTheDocument();
+  });
+
   it("提交期间禁用按钮，并用实时状态消息说明进度", async () => {
     let resolveResponse!: (response: Response) => void;
     vi.stubGlobal(

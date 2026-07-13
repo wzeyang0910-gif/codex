@@ -45,6 +45,8 @@ notepad .env
 ```dotenv
 DATABASE_URL="postgresql://yonye:YOUR_LOCAL_DB_PASSWORD@127.0.0.1:5432/yonye_leads"
 SESSION_SECRET="YOUR_LONG_RANDOM_SESSION_SECRET"
+SEED_ADMIN_PASSWORD="YOUR_UNIQUE_ADMIN_PASSWORD"
+SEED_SALES_PASSWORD="YOUR_UNIQUE_SALES_PASSWORD"
 PROSPEO_API_KEY=""
 HUNTER_API_KEY=""
 APIFY_API_KEY=""
@@ -52,7 +54,7 @@ CONTACTOUT_API_KEY=""
 USE_MOCK_ADAPTERS="true"
 ```
 
-- 必须替换 `YOUR_LOCAL_DB_PASSWORD` 和 `YOUR_LONG_RANDOM_SESSION_SECRET`；会话密钥应使用密码管理器生成的长随机字符串。
+- 必须替换数据库密码、会话密钥和两个初始账号密码。初始密码至少 12 位，并同时包含大写字母、小写字母、数字和符号；管理员和业务员不得使用相同密码。
 - 首次验收不要填写 API Key，也不要把任何真实 API Key、数据库密码或会话密钥发到聊天、截图或提交记录中。
 - `USE_MOCK_ADAPTERS="true"` 表示首次验收使用模拟的外部数据。它不能替代 PostgreSQL，登录、任务和客户数据仍需写入本地数据库。
 - 修改 `.env` 后如果网站已经在运行，请先停止再重新启动。
@@ -78,12 +80,12 @@ npm run dev
 
 看到启动成功提示后，在浏览器打开 [http://127.0.0.1:3000](http://127.0.0.1:3000)。需要停止网站时，回到 PowerShell 按 `Ctrl+C`。
 
-## 初始测试账号
+## 初始账号
 
-- 管理员：`admin@cnyonye.local` / `123456`
-- 业务员：`sales@cnyonye.local` / `123456`
+- 管理员邮箱：`admin@cnyonye.local`，密码为 `.env` 中的 `SEED_ADMIN_PASSWORD`。
+- 业务员邮箱：`sales@cnyonye.local`，密码为 `.env` 中的 `SEED_SALES_PASSWORD`。
 
-这两个账号和密码只用于本机首次测试。当前页面没有自助改密功能；在多人使用、共享网络或长期运行前，必须请维护人员更换默认密码，不能继续使用 `123456`。
+系统没有默认密码，也不会在登录页展示账号密码。重复运行 `npm run prisma:seed` 会按当前环境变量安全轮换两个账号的密码。当前页面没有自助改密功能；需要换密码时，请先修改 `.env`，再重新运行 seed。
 
 ## 首次验收清单
 

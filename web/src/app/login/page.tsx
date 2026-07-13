@@ -6,8 +6,8 @@ import { LogIn } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("sales@cnyonye.local");
-  const [password, setPassword] = useState("123456");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -92,11 +92,7 @@ export default function LoginPage() {
           ) : null}
         </form>
 
-        <div className="login-seeds" aria-label="本地种子账号">
-          <strong>本地种子账号</strong>
-          <span>admin@cnyonye.local / 123456</span>
-          <span>sales@cnyonye.local / 123456</span>
-        </div>
+        <p className="login-seeds">请联系管理员获取账号</p>
       </section>
     </main>
   );
