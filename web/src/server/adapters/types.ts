@@ -9,6 +9,7 @@ export type CompanySearchInput = {
 
 export type CandidateCompany = {
   name: string;
+  brandNames?: string[];
   country: string;
   region: string;
   city?: string;

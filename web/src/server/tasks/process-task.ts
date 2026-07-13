@@ -15,6 +15,7 @@ type ExistingCompany = {
   domain: string | null;
   country: string;
   region: string;
+  brands?: { normalizedName: string }[];
 };
 
 type TaskRecord = {
@@ -33,12 +34,16 @@ type TaskProcessingPrisma = {
   leadTask: {
     findUnique(args: { where: { id: string } }): Promise<TaskRecord | null>;
     update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
+    updateMany(args: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>;
   };
   company: {
-    findMany(args: { select: Record<string, boolean> }): Promise<ExistingCompany[]>;
+    findMany(args: { select: Record<string, unknown> }): Promise<ExistingCompany[]>;
     create(args: { data: ReturnType<typeof buildCompanyCreateData> }): Promise<unknown>;
+    count(args: { where: { taskId: string; isDelivered: true } }): Promise<number>;
   };
 };
+
+export const STALE_RUNNING_TASK_MS = 15 * 60 * 1000;
 
 export type ProcessLeadTaskDependencies = {
   prisma?: TaskProcessingPrisma;
@@ -60,15 +65,17 @@ export function filterExistingCompanies(
   existingCompanies: ExistingCompany[]
 ): CandidateCompany[] {
   const normalizedKeys = new Set(existingCompanies.map(existingKey));
+  existingCompanies.forEach((company) => company.brands?.forEach((brand) => {
+    normalizedKeys.add(`${brand.normalizedName}:${company.country}:${company.region}`);
+  }));
   const domainKeys = new Set(existingCompanies.map(existingDomainKey).filter((value): value is string => !!value));
 
   return candidates.filter((candidate) => {
-    const normalizedName = normalizeCompanyName(candidate.name);
+    const normalizedNames = [candidate.name, ...(candidate.brandNames ?? [])].map(normalizeCompanyName).filter(Boolean);
     const domain = extractDomain(candidate.website);
-    const normalizedKey = `${normalizedName}:${candidate.country}:${candidate.region}`;
     const domainKey = domain ? `${domain}:${candidate.country}:${candidate.region}` : null;
 
-    return !normalizedKeys.has(normalizedKey) && (!domainKey || !domainKeys.has(domainKey));
+    return !normalizedNames.some((name) => normalizedKeys.has(`${name}:${candidate.country}:${candidate.region}`)) && (!domainKey || !domainKeys.has(domainKey));
   });
 }
 
@@ -84,6 +91,14 @@ function applyGlobalDedupe(adapters: AdapterSet, existingCompanies: ExistingComp
 }
 
 export function buildCompanyCreateData(task: TaskRecord, lead: PipelineDeliveredLead, deliveredAt: Date) {
+  const seenBrands = new Set<string>();
+  const brands = (lead.brandNames ?? []).flatMap((name) => {
+    const trimmed = name.trim();
+    const normalizedName = normalizeCompanyName(trimmed);
+    if (!trimmed || !normalizedName || seenBrands.has(normalizedName)) return [];
+    seenBrands.add(normalizedName);
+    return [{ name: trimmed, normalizedName, country: lead.country, region: lead.region }];
+  });
   return {
     taskId: task.id,
     ownerId: task.userId,
@@ -94,7 +109,8 @@ export function buildCompanyCreateData(task: TaskRecord, lead: PipelineDelivered
     city: lead.city,
     website: lead.website,
     domain: lead.domain,
-    brandNames: [],
+    brandNames: brands.map((brand) => brand.name),
+    brands: { create: brands },
     customerType: lead.customerType,
     businessSummary: lead.businessSummary,
     demandEvidence: lead.demandSignals.join("\n"),
@@ -155,21 +171,31 @@ function isPrismaP2002(error: unknown): boolean {
 export async function processLeadTask(taskId: string, dependencies: ProcessLeadTaskDependencies = {}): Promise<void> {
   const taskPrisma = dependencies.prisma ?? (defaultPrisma as unknown as TaskProcessingPrisma);
   const now = dependencies.now ?? (() => new Date());
+  const claimedAt = now();
+  let claimed = false;
 
   try {
+    const claim = await taskPrisma.leadTask.updateMany({
+      where: {
+        id: taskId,
+        OR: [
+          { status: "queued" },
+          { status: "running", startedAt: { lt: new Date(claimedAt.getTime() - STALE_RUNNING_TASK_MS) } }
+        ]
+      },
+      data: { status: "running", startedAt: claimedAt, completedAt: null }
+    });
+    if (claim.count !== 1) return;
+    claimed = true;
+
     const task = await taskPrisma.leadTask.findUnique({ where: { id: taskId } });
 
     if (!task) {
       return;
     }
 
-    await taskPrisma.leadTask.update({
-      where: { id: taskId },
-      data: { status: "running", startedAt: now() }
-    });
-
     const existingCompanies = await taskPrisma.company.findMany({
-      select: { normalizedName: true, domain: true, country: true, region: true }
+      select: { normalizedName: true, domain: true, country: true, region: true, brands: { select: { normalizedName: true } } }
     });
     const adapters = applyGlobalDedupe((dependencies.createAdapters ?? createAdapterSet)(), existingCompanies);
     const result = await (dependencies.runPipeline ?? runLeadPipeline)(
@@ -185,10 +211,11 @@ export async function processLeadTask(taskId: string, dependencies: ProcessLeadT
       adapters
     );
     const deliveredAt = now();
-    let deliveredCount = 0;
+    let deliveredCount = await taskPrisma.company.count({ where: { taskId, isDelivered: true } });
     let duplicateCount = 0;
 
-    for (const lead of result.delivered) {
+    for (const lead of [...result.delivered, ...result.alternates]) {
+      if (deliveredCount >= task.targetCount) break;
       try {
         await taskPrisma.company.create({
           data: buildCompanyCreateData(task, lead, deliveredAt)
@@ -204,8 +231,10 @@ export async function processLeadTask(taskId: string, dependencies: ProcessLeadT
       }
     }
 
-    await taskPrisma.leadTask.update({
-      where: { id: taskId },
+    deliveredCount = await taskPrisma.company.count({ where: { taskId, isDelivered: true } });
+
+    await taskPrisma.leadTask.updateMany({
+      where: { id: taskId, status: "running", startedAt: claimedAt },
       data: {
         status: taskStatusForDeliveredCount(deliveredCount, task.targetCount),
         deliveredCount,
@@ -215,9 +244,10 @@ export async function processLeadTask(taskId: string, dependencies: ProcessLeadT
       }
     });
   } catch {
+    if (!claimed) return;
     try {
-      await taskPrisma.leadTask.update({
-        where: { id: taskId },
+      await taskPrisma.leadTask.updateMany({
+        where: { id: taskId, status: "running", startedAt: claimedAt },
         data: { status: "failed", completedAt: now() }
       });
     } catch {

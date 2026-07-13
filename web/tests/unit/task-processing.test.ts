@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildCompanyCreateData,
   filterExistingCompanies,
@@ -150,10 +150,15 @@ describe("task processing", () => {
       marketSummary: { summary: "summary", keywords: ["kinesiology tape"], buyerConcerns: [] },
       searchedCount: 7,
       delivered: [deliveredLead(), deliveredLead({ name: "Fresh Medical Trading", normalizedName: "fresh medical trading" })],
+      alternates: [],
       rejected: [{ company: candidate({ name: "Rejected Medical" }), reason: "score too low" }]
     };
     const prisma = {
       leadTask: {
+        updateMany: async (args: any) => {
+          if (args.data.status !== "running") updates.push(args);
+          return { count: 1 };
+        },
         findUnique: async () => task,
         update: async (args: unknown) => {
           updates.push(args);
@@ -162,6 +167,7 @@ describe("task processing", () => {
       },
       company: {
         findMany: async () => [],
+        count: async () => createdCompanies.length,
         create: async (args: unknown) => {
           createdCompanies.push(args);
           return args;
@@ -196,6 +202,7 @@ describe("task processing", () => {
   it("skips a duplicate company create while preserving earlier and later deliveries", async () => {
     const updates: unknown[] = [];
     const createAttempts: unknown[] = [];
+    let persistedCount = 0;
     const result: PipelineResult = {
       marketSummary: { summary: "summary", keywords: ["kinesiology tape"], buyerConcerns: [] },
       searchedCount: 3,
@@ -204,10 +211,15 @@ describe("task processing", () => {
         deliveredLead({ name: "Duplicate Medical", normalizedName: "duplicate medical" }),
         deliveredLead({ name: "Fresh Medical Trading", normalizedName: "fresh medical trading" })
       ],
+      alternates: [],
       rejected: []
     };
     const prisma = {
       leadTask: {
+        updateMany: async (args: any) => {
+          if (args.data.status !== "running") updates.push(args);
+          return { count: 1 };
+        },
         findUnique: async () => task,
         update: async (args: unknown) => {
           updates.push(args);
@@ -216,11 +228,13 @@ describe("task processing", () => {
       },
       company: {
         findMany: async () => [],
+        count: async () => persistedCount,
         create: async (args: unknown) => {
           createAttempts.push(args);
           if (createAttempts.length === 2) {
             throw Object.assign(new Error("duplicate"), { code: "P2002" });
           }
+          persistedCount += 1;
           return args;
         }
       }
@@ -245,6 +259,98 @@ describe("task processing", () => {
     });
   });
 
+  it("claims a queued task atomically and ignores a second invocation", async () => {
+    let claimed = false;
+    let pipelineRuns = 0;
+    const prisma = {
+      leadTask: {
+        updateMany: async () => claimed ? { count: 0 } : (claimed = true, { count: 1 }),
+        findUnique: async () => task,
+        update: async () => ({}),
+      },
+      company: { findMany: async () => [], create: async () => ({}), count: async () => 0 }
+    };
+    const runPipeline = async (): Promise<PipelineResult> => {
+      pipelineRuns += 1;
+      return { marketSummary: { summary: "", keywords: [], buyerConcerns: [] }, searchedCount: 0, delivered: [], alternates: [], rejected: [] };
+    };
+
+    await Promise.all([processLeadTask("task_1", { prisma, runPipeline }), processLeadTask("task_1", { prisma, runPipeline })]);
+
+    expect(pipelineRuns).toBe(1);
+  });
+
+  it("uses qualified alternates after P2002 and finishes with five database deliveries", async () => {
+    const leads = Array.from({ length: 6 }, (_, index) => deliveredLead({ name: `Medical ${index}`, normalizedName: `medical ${index}` }));
+    let attempts = 0;
+    let persisted = 0;
+    const updates: any[] = [];
+    const count = vi.fn(async () => persisted);
+    const prisma = {
+      leadTask: {
+        updateMany: async (args: any) => {
+          if (args.data.status !== "running") updates.push(args);
+          return { count: 1 };
+        },
+        findUnique: async () => task,
+        update: async (args: any) => args
+      },
+      company: {
+        findMany: async () => [],
+        create: async () => { attempts += 1; if (attempts === 2) throw Object.assign(new Error("duplicate"), { code: "P2002" }); persisted += 1; return {}; },
+        count
+      }
+    };
+    const result: PipelineResult = { marketSummary: { summary: "", keywords: [], buyerConcerns: [] }, searchedCount: 6, delivered: leads.slice(0, 5), alternates: leads.slice(5), rejected: [] };
+
+    await processLeadTask("task_1", { prisma, runPipeline: async () => result });
+
+    expect(attempts).toBe(6);
+    expect(count).toHaveBeenCalledTimes(2);
+    expect(updates.at(-1)).toMatchObject({ data: { status: "completed", deliveredCount: 5 } });
+  });
+
+  it("only finalizes the task while it still owns the running lease", async () => {
+    const claimedAt = new Date("2026-07-12T08:00:00Z");
+    const updateManyCalls: any[] = [];
+    const prisma = {
+      leadTask: {
+        updateMany: async (args: any) => {
+          updateManyCalls.push(args);
+          return { count: 1 };
+        },
+        findUnique: async () => task,
+        update: async () => {
+          throw new Error("final status must use the lease-aware updateMany path");
+        }
+      },
+      company: { findMany: async () => [], create: async () => ({}), count: async () => 0 }
+    };
+    const result: PipelineResult = {
+      marketSummary: { summary: "", keywords: [], buyerConcerns: [] },
+      searchedCount: 0,
+      delivered: [],
+      alternates: [],
+      rejected: []
+    };
+
+    await processLeadTask("task_1", { prisma, runPipeline: async () => result, now: () => claimedAt });
+
+    expect(updateManyCalls.at(-1)).toMatchObject({
+      where: { id: "task_1", status: "running", startedAt: claimedAt },
+      data: { status: "partial", deliveredCount: 0 }
+    });
+  });
+
+  it("persists normalized brands and filters candidates matching an existing brand", () => {
+    const brandedLead = deliveredLead({ brandNames: [" ACME Care ", "acme care", ""] });
+    const data = buildCompanyCreateData(task, brandedLead, new Date());
+
+    expect(data.brandNames).toEqual(["ACME Care"]);
+    expect(data.brands.create).toEqual([{ name: "ACME Care", normalizedName: "acme care", country: "Saudi Arabia", region: "Middle East" }]);
+    expect(filterExistingCompanies([candidate({ name: "Acme Care" })], [{ normalizedName: "parent", domain: null, country: "Saudi Arabia", region: "Middle East", brands: [{ normalizedName: "acme care" }] }])).toEqual([]);
+  });
+
   it("does not reject when the task lookup and failed-status update both fail", async () => {
     const prisma = {
       leadTask: {
@@ -253,33 +359,38 @@ describe("task processing", () => {
         },
         update: async () => {
           throw new Error("status unavailable");
+        },
+        updateMany: async () => {
+          throw new Error("status unavailable");
         }
       },
       company: {
         findMany: async () => [],
-        create: async () => ({})
+        create: async () => ({}),
+        count: async () => 0
       }
     };
 
     await expect(processLeadTask("task_1", { prisma })).resolves.toBeUndefined();
   });
 
-  it("marks the task failed without rejecting when the initial running update fails", async () => {
+  it("marks the task failed without rejecting when processing fails after claim", async () => {
     const updates: unknown[] = [];
     const prisma = {
       leadTask: {
-        findUnique: async () => task,
-        update: async (args: unknown) => {
+        findUnique: async () => {
+          throw new Error("lookup unavailable");
+        },
+        update: async () => ({}),
+        updateMany: async (args: unknown) => {
           updates.push(args);
-          if (updates.length === 1) {
-            throw new Error("running update unavailable");
-          }
-          return args;
+          return { count: 1 };
         }
       },
       company: {
         findMany: async () => [],
-        create: async () => ({})
+        create: async () => ({}),
+        count: async () => 0
       }
     };
 

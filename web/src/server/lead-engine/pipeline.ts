@@ -41,6 +41,7 @@ export type PipelineResult = {
   marketSummary: ReturnType<typeof buildMarketResearchSummary>;
   searchedCount: number;
   delivered: PipelineDeliveredLead[];
+  alternates: PipelineDeliveredLead[];
   rejected: PipelineRejectedLead[];
 };
 
@@ -63,21 +64,22 @@ export async function runLeadPipeline(input: RunLeadPipelineInput, adapters: Ada
   });
   const recommendedProducts = selectRecommendedProducts(input.productKeys);
   const delivered: PipelineDeliveredLead[] = [];
+  const alternates: PipelineDeliveredLead[] = [];
   const rejected: PipelineRejectedLead[] = [];
   const seen = new Set<string>();
 
   for (const company of candidates) {
-    if (delivered.length >= input.targetCount) break;
-
     const normalizedName = normalizeCompanyName(company.name);
     const domain = extractDomain(company.website);
-    const dedupeKey = `${normalizedName}:${domain ?? ""}:${company.country}`;
+    const dedupeNames = [normalizedName, ...(company.brandNames ?? []).map(normalizeCompanyName)].filter(Boolean);
+    const duplicate = dedupeNames.some((name) => seen.has(`${name}:${company.country}:${company.region}`));
 
-    if (seen.has(dedupeKey)) {
+    if (duplicate || (domain && seen.has(`domain:${domain}:${company.country}:${company.region}`))) {
       rejected.push({ company, reason: rejectionReasonForDuplicate() });
       continue;
     }
-    seen.add(dedupeKey);
+    dedupeNames.forEach((name) => seen.add(`${name}:${company.country}:${company.region}`));
+    if (domain) seen.add(`domain:${domain}:${company.country}:${company.region}`);
 
     const qualifyingContacts = selectQualifyingContacts(await adapters.contacts.findContacts(company));
     if (qualifyingContacts.length === 0) {
@@ -109,7 +111,7 @@ export async function runLeadPipeline(input: RunLeadPipelineInput, adapters: Ada
       language: input.language
     });
 
-    delivered.push({
+    const qualifiedLead: PipelineDeliveredLead = {
       ...company,
       normalizedName,
       domain,
@@ -120,8 +122,10 @@ export async function runLeadPipeline(input: RunLeadPipelineInput, adapters: Ada
       riskNotes: score.riskNotes,
       recommendedProducts,
       outreach
-    });
+    };
+    if (delivered.length < input.targetCount) delivered.push(qualifiedLead);
+    else alternates.push(qualifiedLead);
   }
 
-  return { marketSummary, searchedCount: candidates.length, delivered, rejected };
+  return { marketSummary, searchedCount: candidates.length, delivered, alternates, rejected };
 }

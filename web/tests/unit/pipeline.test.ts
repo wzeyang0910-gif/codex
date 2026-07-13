@@ -122,6 +122,30 @@ describe("lead pipeline", () => {
     expect(result.rejected).toMatchObject([{ company: duplicate, reason: expect.stringContaining("重复公司") }]);
   });
 
+  it("keeps qualified alternates available for persistence conflicts", async () => {
+    const candidates = Array.from({ length: 6 }, (_, index) => company(`Qualified Medical ${index + 1}`));
+    const result = await runLeadPipeline(
+      { ...input, targetCount: 5 },
+      adaptersFor(candidates, candidates.map(() => [contact()]))
+    );
+
+    expect(result.delivered).toHaveLength(5);
+    expect(result.alternates.map((lead) => lead.name)).toEqual(["Qualified Medical 6"]);
+  });
+
+  it("deduplicates a company when another candidate name matches one of its brands", async () => {
+    const branded = company("Parent Medical");
+    branded.brandNames = ["Acme Care"];
+    const brandCandidate = company("Acme Care");
+    const replacement = company("Replacement Medical");
+    const result = await runLeadPipeline(
+      { ...input, targetCount: 2 },
+      adaptersFor([branded, brandCandidate, replacement], [[contact()], [contact()], [contact()]])
+    );
+
+    expect(result.delivered.map((lead) => lead.name)).toEqual([branded.name, replacement.name]);
+  });
+
   it("uses selected Yonye product display names in recommendations and outreach", async () => {
     const candidate = company("Product Name Medical");
     const result = await runLeadPipeline(
