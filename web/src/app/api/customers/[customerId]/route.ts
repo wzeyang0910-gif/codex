@@ -58,9 +58,12 @@ export async function PATCH(request: Request, context: { params: Promise<{ custo
       }
 
       if (parsed.data.name === currentCustomer.name) {
+        const data = { ...parsed.data };
+        delete data.name;
+
         return tx.company.update({
           where: { id: customerId },
-          data: parsed.data
+          data
         });
       }
 

@@ -134,6 +134,18 @@ describe("customer rename route", () => {
     });
   });
 
+  it("does not write an unchanged name after the transaction re-read", async () => {
+    const response = await patch(requestFor(owner, { name: "Acme Medical Ltd", notes: "Called purchasing" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateCompany).toHaveBeenCalledWith({
+      where: { id: "customer_1" },
+      data: { notes: "Called purchasing" }
+    });
+    expect(mocks.updateCompanies).not.toHaveBeenCalled();
+    expect(mocks.updateCompanyBrand).not.toHaveBeenCalled();
+  });
+
   it("returns 409 when the legal identity update conflicts inside the transaction", async () => {
     mocks.updateCompanyBrand.mockRejectedValue(Object.assign(new Error("duplicate identity"), { code: "P2002" }));
 
