@@ -1,21 +1,12 @@
 import type { SessionUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/auth";
+import { getSessionSecret } from "@/lib/session-secret";
 import { signSessionToken, verifySessionToken } from "@/lib/session-token";
 
 export const SESSION_COOKIE_NAME = "yonye_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 
 export type OwnershipDecision = { allowed: true } | { allowed: false; status: 401 | 403 };
-
-function getSessionSecret(): string {
-  const secret = process.env.SESSION_SECRET;
-
-  if (!secret) {
-    throw new Error("SESSION_SECRET is required");
-  }
-
-  return secret;
-}
 
 export function createSessionToken(user: SessionUser): string {
   return signSessionToken(user, {

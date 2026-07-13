@@ -2,17 +2,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { SessionUser } from "@/lib/auth";
 import { SESSION_COOKIE_NAME } from "@/lib/session";
+import { getSessionSecret } from "@/lib/session-secret";
 import { verifySessionToken } from "@/lib/session-token";
-
-function getSessionSecret(): string {
-  const secret = process.env.SESSION_SECRET;
-
-  if (!secret) {
-    throw new Error("SESSION_SECRET is required");
-  }
-
-  return secret;
-}
 
 export async function getServerSession(): Promise<SessionUser | null> {
   const cookieStore = await cookies();

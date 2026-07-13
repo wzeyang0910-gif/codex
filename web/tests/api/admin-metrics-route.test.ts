@@ -17,7 +17,7 @@ vi.mock("@/lib/db", () => ({
 
 import { GET } from "@/app/api/admin/metrics/route";
 
-const secret = "admin-metrics-route-secret";
+const secret = "Adm1n-Metrics_Route!Secret-2026-07";
 const admin = { id: "admin_1", name: "Admin", email: "admin@example.com", role: "admin" as const };
 const sales = { id: "sales_1", name: "Sales", email: "sales@example.com", role: "sales" as const };
 
