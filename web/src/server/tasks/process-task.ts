@@ -38,7 +38,7 @@ type TaskProcessingPrisma = {
     updateMany(args: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>;
   };
   company: {
-    findMany(args: { where: Record<string, unknown>; select: Record<string, unknown>; take: number }): Promise<ExistingCompany[]>;
+    findMany(args: { where: Record<string, unknown>; select: Record<string, unknown> }): Promise<ExistingCompany[]>;
     create(args: { data: ReturnType<typeof buildCompanyCreateData> }): Promise<unknown>;
     count(args: { where: { taskId: string; isDelivered: true } }): Promise<number>;
   };
@@ -57,6 +57,7 @@ type TaskProcessingTransaction = {
 export const STALE_RUNNING_TASK_MS = 15 * 60 * 1000;
 const GLOBAL_DEDUPE_RECALL_MULTIPLIER = 3;
 const GLOBAL_DEDUPE_RECALL_MAX = 100;
+const GLOBAL_DEDUPE_MAX_BATCHES = 10;
 
 export type ProcessLeadTaskDependencies = {
   prisma?: TaskProcessingPrisma;
@@ -143,21 +144,27 @@ function applyGlobalDedupe(
     search: {
       async searchCompanies(input) {
         const candidateLimit = pipelineCandidateLimit(targetCount);
-        const recallLimit = Math.min(candidateLimit * GLOBAL_DEDUPE_RECALL_MULTIPLIER, GLOBAL_DEDUPE_RECALL_MAX);
-        const candidates = (await adapters.search.searchCompanies(input)).slice(0, recallLimit);
+        const batchSize = Math.min(candidateLimit * GLOBAL_DEDUPE_RECALL_MULTIPLIER, GLOBAL_DEDUPE_RECALL_MAX);
+        const candidates = (await adapters.search.searchCompanies(input)).slice(0, batchSize * GLOBAL_DEDUPE_MAX_BATCHES);
         if (candidates.length === 0) return [];
-        const existingCompanies = await companyPrisma.findMany({
-          where: existingCompanyWhere(candidates),
-          select: {
-            normalizedName: true,
-            domain: true,
-            country: true,
-            region: true,
-            brands: { select: { normalizedName: true } }
-          },
-          take: recallLimit
-        });
-        return filterExistingCompanies(candidates, existingCompanies).slice(0, candidateLimit);
+        const newCandidates: CandidateCompany[] = [];
+
+        for (let offset = 0; offset < candidates.length && newCandidates.length < candidateLimit; offset += batchSize) {
+          const batch = candidates.slice(offset, offset + batchSize);
+          const existingCompanies = await companyPrisma.findMany({
+            where: existingCompanyWhere(batch),
+            select: {
+              normalizedName: true,
+              domain: true,
+              country: true,
+              region: true,
+              brands: { select: { normalizedName: true } }
+            }
+          });
+          newCandidates.push(...filterExistingCompanies(batch, existingCompanies));
+        }
+
+        return newCandidates.slice(0, candidateLimit);
       }
     }
   };
