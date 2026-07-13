@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMockAdapterSet } from "@/server/adapters/mock";
 import { scoreLead } from "@/lib/scoring";
 import type { AdapterSet, CandidateCompany, FoundContact } from "@/server/adapters/types";
@@ -131,6 +131,22 @@ describe("lead pipeline", () => {
 
     expect(result.delivered).toHaveLength(5);
     expect(result.alternates.map((lead) => lead.name)).toEqual(["Qualified Medical 6"]);
+  });
+
+  it("caps candidate checks and the alternate pool for large search results", async () => {
+    const candidates = Array.from({ length: 20 }, (_, index) => company(`Bounded Medical ${index + 1}`));
+    const findContacts = vi.fn(async () => [contact()]);
+    const adapters: AdapterSet = {
+      search: { searchCompanies: async () => candidates },
+      contacts: { findContacts }
+    };
+
+    const result = await runLeadPipeline({ ...input, targetCount: 2 }, adapters);
+
+    expect(result.searchedCount).toBe(7);
+    expect(result.delivered).toHaveLength(2);
+    expect(result.alternates).toHaveLength(5);
+    expect(findContacts).toHaveBeenCalledTimes(7);
   });
 
   it("deduplicates a company when another candidate name matches one of its brands", async () => {

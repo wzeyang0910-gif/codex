@@ -4,6 +4,7 @@ import { prisma as defaultPrisma } from "@/lib/db";
 import { createAdapterSet } from "@/server/adapters/mock";
 import type { AdapterSet, CandidateCompany } from "@/server/adapters/types";
 import {
+  pipelineCandidateLimit,
   runLeadPipeline,
   type PipelineDeliveredLead,
   type PipelineResult,
@@ -37,9 +38,19 @@ type TaskProcessingPrisma = {
     updateMany(args: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>;
   };
   company: {
-    findMany(args: { select: Record<string, unknown> }): Promise<ExistingCompany[]>;
+    findMany(args: { where: Record<string, unknown>; select: Record<string, unknown> }): Promise<ExistingCompany[]>;
     create(args: { data: ReturnType<typeof buildCompanyCreateData> }): Promise<unknown>;
     count(args: { where: { taskId: string; isDelivered: true } }): Promise<number>;
+  };
+  $transaction(callback: (transaction: TaskProcessingTransaction) => Promise<unknown>): Promise<unknown>;
+};
+
+type TaskProcessingTransaction = {
+  leadTask: {
+    updateMany(args: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>;
+  };
+  company: {
+    create(args: { data: ReturnType<typeof buildCompanyCreateData> }): Promise<unknown>;
   };
 };
 
@@ -79,19 +90,82 @@ export function filterExistingCompanies(
   });
 }
 
-function applyGlobalDedupe(adapters: AdapterSet, existingCompanies: ExistingCompany[]): AdapterSet {
+function existingCompanyWhere(candidates: CandidateCompany[]): Record<string, unknown> {
+  const groups = new Map<string, { country: string; region: string; names: Set<string>; domains: Set<string> }>();
+
+  for (const candidate of candidates) {
+    const key = `${candidate.country}\u0000${candidate.region}`;
+    const group = groups.get(key) ?? {
+      country: candidate.country,
+      region: candidate.region,
+      names: new Set<string>(),
+      domains: new Set<string>()
+    };
+    [candidate.name, ...(candidate.brandNames ?? [])]
+      .map(normalizeCompanyName)
+      .filter(Boolean)
+      .forEach((name) => group.names.add(name));
+    const domain = extractDomain(candidate.website);
+    if (domain) group.domains.add(domain);
+    groups.set(key, group);
+  }
+
+  return {
+    OR: [...groups.values()].flatMap((group) => {
+      const names = [...group.names];
+      const domains = [...group.domains];
+      return [
+        { normalizedName: { in: names }, country: group.country, region: group.region },
+        ...(domains.length > 0 ? [{ domain: { in: domains }, country: group.country, region: group.region }] : []),
+        {
+          brands: {
+            some: {
+              normalizedName: { in: names },
+              country: group.country,
+              region: group.region
+            }
+          }
+        }
+      ];
+    })
+  };
+}
+
+function applyGlobalDedupe(
+  adapters: AdapterSet,
+  companyPrisma: TaskProcessingPrisma["company"],
+  targetCount: number
+): AdapterSet {
   return {
     ...adapters,
     search: {
       async searchCompanies(input) {
-        return filterExistingCompanies(await adapters.search.searchCompanies(input), existingCompanies);
+        const candidates = (await adapters.search.searchCompanies(input)).slice(0, pipelineCandidateLimit(targetCount));
+        if (candidates.length === 0) return [];
+        const existingCompanies = await companyPrisma.findMany({
+          where: existingCompanyWhere(candidates),
+          select: {
+            normalizedName: true,
+            domain: true,
+            country: true,
+            region: true,
+            brands: { select: { normalizedName: true } }
+          }
+        });
+        return filterExistingCompanies(candidates, existingCompanies);
       }
     }
   };
 }
 
 export function buildCompanyCreateData(task: TaskRecord, lead: PipelineDeliveredLead, deliveredAt: Date) {
-  const seenBrands = new Set<string>();
+  const legalIdentity = {
+    name: lead.name,
+    normalizedName: lead.normalizedName,
+    country: lead.country,
+    region: lead.region
+  };
+  const seenBrands = new Set<string>([lead.normalizedName]);
   const brands = (lead.brandNames ?? []).flatMap((name) => {
     const trimmed = name.trim();
     const normalizedName = normalizeCompanyName(trimmed);
@@ -110,7 +184,7 @@ export function buildCompanyCreateData(task: TaskRecord, lead: PipelineDelivered
     website: lead.website,
     domain: lead.domain,
     brandNames: brands.map((brand) => brand.name),
-    brands: { create: brands },
+    brands: { create: [legalIdentity, ...brands] },
     customerType: lead.customerType,
     businessSummary: lead.businessSummary,
     demandEvidence: lead.demandSignals.join("\n"),
@@ -168,10 +242,20 @@ function isPrismaP2002(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
+class LeaseLostError extends Error {}
+
+function nextFenceAt(now: () => Date, currentFence: Date): Date {
+  const candidate = now();
+  return candidate.getTime() > currentFence.getTime()
+    ? candidate
+    : new Date(currentFence.getTime() + 1);
+}
+
 export async function processLeadTask(taskId: string, dependencies: ProcessLeadTaskDependencies = {}): Promise<void> {
   const taskPrisma = dependencies.prisma ?? (defaultPrisma as unknown as TaskProcessingPrisma);
   const now = dependencies.now ?? (() => new Date());
   const claimedAt = now();
+  let currentFence = claimedAt;
   let claimed = false;
 
   try {
@@ -194,10 +278,11 @@ export async function processLeadTask(taskId: string, dependencies: ProcessLeadT
       return;
     }
 
-    const existingCompanies = await taskPrisma.company.findMany({
-      select: { normalizedName: true, domain: true, country: true, region: true, brands: { select: { normalizedName: true } } }
-    });
-    const adapters = applyGlobalDedupe((dependencies.createAdapters ?? createAdapterSet)(), existingCompanies);
+    const adapters = applyGlobalDedupe(
+      (dependencies.createAdapters ?? createAdapterSet)(),
+      taskPrisma.company,
+      task.targetCount
+    );
     const result = await (dependencies.runPipeline ?? runLeadPipeline)(
       {
         region: task.targetRegion,
@@ -210,18 +295,28 @@ export async function processLeadTask(taskId: string, dependencies: ProcessLeadT
       },
       adapters
     );
-    const deliveredAt = now();
     let deliveredCount = await taskPrisma.company.count({ where: { taskId, isDelivered: true } });
     let duplicateCount = 0;
 
     for (const lead of [...result.delivered, ...result.alternates]) {
       if (deliveredCount >= task.targetCount) break;
+      const renewedAt = nextFenceAt(now, currentFence);
       try {
-        await taskPrisma.company.create({
-          data: buildCompanyCreateData(task, lead, deliveredAt)
+        await taskPrisma.$transaction(async (transaction) => {
+          const renewal = await transaction.leadTask.updateMany({
+            where: { id: taskId, status: "running", startedAt: currentFence },
+            data: { startedAt: renewedAt }
+          });
+          if (renewal.count !== 1) throw new LeaseLostError();
+
+          await transaction.company.create({
+            data: buildCompanyCreateData(task, lead, renewedAt)
+          });
         });
+        currentFence = renewedAt;
         deliveredCount += 1;
       } catch (error) {
+        if (error instanceof LeaseLostError) return;
         if (isPrismaP2002(error)) {
           duplicateCount += 1;
           continue;
@@ -234,7 +329,7 @@ export async function processLeadTask(taskId: string, dependencies: ProcessLeadT
     deliveredCount = await taskPrisma.company.count({ where: { taskId, isDelivered: true } });
 
     await taskPrisma.leadTask.updateMany({
-      where: { id: taskId, status: "running", startedAt: claimedAt },
+      where: { id: taskId, status: "running", startedAt: currentFence },
       data: {
         status: taskStatusForDeliveredCount(deliveredCount, task.targetCount),
         deliveredCount,
@@ -247,7 +342,7 @@ export async function processLeadTask(taskId: string, dependencies: ProcessLeadT
     if (!claimed) return;
     try {
       await taskPrisma.leadTask.updateMany({
-        where: { id: taskId, status: "running", startedAt: claimedAt },
+        where: { id: taskId, status: "running", startedAt: currentFence },
         data: { status: "failed", completedAt: now() }
       });
     } catch {

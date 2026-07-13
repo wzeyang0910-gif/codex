@@ -67,6 +67,10 @@ function deliveredLead(overrides: Partial<PipelineDeliveredLead> = {}): Pipeline
   };
 }
 
+async function unusedTransaction(): Promise<never> {
+  throw new Error("transaction was not expected in this test");
+}
+
 describe("task processing", () => {
   it("filters companies that already exist globally before the pipeline evaluates them", () => {
     const existing = [
@@ -172,7 +176,16 @@ describe("task processing", () => {
           createdCompanies.push(args);
           return args;
         }
-      }
+      },
+      $transaction: async (callback: (tx: any) => Promise<unknown>) => callback({
+        leadTask: { updateMany: async () => ({ count: 1 }) },
+        company: {
+          create: async (args: unknown) => {
+            createdCompanies.push(args);
+            return args;
+          }
+        }
+      })
     };
     const adapters: AdapterSet = {
       search: { searchCompanies: async () => [] },
@@ -237,7 +250,20 @@ describe("task processing", () => {
           persistedCount += 1;
           return args;
         }
-      }
+      },
+      $transaction: async (callback: (tx: any) => Promise<unknown>) => callback({
+        leadTask: { updateMany: async () => ({ count: 1 }) },
+        company: {
+          create: async (args: unknown) => {
+            createAttempts.push(args);
+            if (createAttempts.length === 2) {
+              throw Object.assign(new Error("duplicate"), { code: "P2002" });
+            }
+            persistedCount += 1;
+            return args;
+          }
+        }
+      })
     };
     const adapters: AdapterSet = {
       search: { searchCompanies: async () => [] },
@@ -268,7 +294,8 @@ describe("task processing", () => {
         findUnique: async () => task,
         update: async () => ({}),
       },
-      company: { findMany: async () => [], create: async () => ({}), count: async () => 0 }
+      company: { findMany: async () => [], create: async () => ({}), count: async () => 0 },
+      $transaction: unusedTransaction
     };
     const runPipeline = async (): Promise<PipelineResult> => {
       pipelineRuns += 1;
@@ -280,8 +307,12 @@ describe("task processing", () => {
     expect(pipelineRuns).toBe(1);
   });
 
-  it("uses qualified alternates after P2002 and finishes with five database deliveries", async () => {
-    const leads = Array.from({ length: 6 }, (_, index) => deliveredLead({ name: `Medical ${index}`, normalizedName: `medical ${index}` }));
+  it("uses an alternate when a brand identity conflicts with an existing company legal name", async () => {
+    const leads = Array.from({ length: 6 }, (_, index) => deliveredLead({
+      name: `Medical ${index}`,
+      normalizedName: `medical ${index}`,
+      brandNames: index === 1 ? ["Existing Legal Name"] : []
+    }));
     let attempts = 0;
     let persisted = 0;
     const updates: any[] = [];
@@ -299,7 +330,23 @@ describe("task processing", () => {
         findMany: async () => [],
         create: async () => { attempts += 1; if (attempts === 2) throw Object.assign(new Error("duplicate"), { code: "P2002" }); persisted += 1; return {}; },
         count
-      }
+      },
+      $transaction: async (callback: (tx: any) => Promise<unknown>) => callback({
+        leadTask: { updateMany: async () => ({ count: 1 }) },
+        company: {
+          create: async (args: any) => {
+            attempts += 1;
+            const conflictsWithLegalName = args.data.brands.create.some(
+              (identity: { normalizedName: string }) => identity.normalizedName === "existing legal name"
+            );
+            if (conflictsWithLegalName) {
+              throw Object.assign(new Error("identity conflict"), { code: "P2002" });
+            }
+            persisted += 1;
+            return {};
+          }
+        }
+      })
     };
     const result: PipelineResult = { marketSummary: { summary: "", keywords: [], buyerConcerns: [] }, searchedCount: 6, delivered: leads.slice(0, 5), alternates: leads.slice(5), rejected: [] };
 
@@ -324,7 +371,8 @@ describe("task processing", () => {
           throw new Error("final status must use the lease-aware updateMany path");
         }
       },
-      company: { findMany: async () => [], create: async () => ({}), count: async () => 0 }
+      company: { findMany: async () => [], create: async () => ({}), count: async () => 0 },
+      $transaction: unusedTransaction
     };
     const result: PipelineResult = {
       marketSummary: { summary: "", keywords: [], buyerConcerns: [] },
@@ -342,13 +390,169 @@ describe("task processing", () => {
     });
   });
 
+  it("renews and checks the lease in each company transaction and finalizes with the current fence", async () => {
+    const rootUpdates: any[] = [];
+    const leaseUpdates: any[] = [];
+    const creates: any[] = [];
+    const result: PipelineResult = {
+      marketSummary: { summary: "", keywords: [], buyerConcerns: [] },
+      searchedCount: 2,
+      delivered: [deliveredLead(), deliveredLead({ name: "Second Medical", normalizedName: "second medical" })],
+      alternates: [],
+      rejected: []
+    };
+    let clock = new Date("2026-07-12T08:00:00Z").getTime();
+    const prisma = {
+      leadTask: {
+        updateMany: async (args: any) => {
+          rootUpdates.push(args);
+          return { count: 1 };
+        },
+        findUnique: async () => ({ ...task, targetCount: 2 }),
+        update: async () => ({})
+      },
+      company: {
+        findMany: async () => [],
+        create: async () => {
+          throw new Error("company.create must use the transaction client");
+        },
+        count: async () => creates.length
+      },
+      $transaction: async (callback: (tx: any) => Promise<unknown>) => callback({
+        leadTask: {
+          updateMany: async (args: any) => {
+            leaseUpdates.push(args);
+            return { count: 1 };
+          }
+        },
+        company: {
+          create: async (args: any) => {
+            creates.push(args);
+            return args;
+          }
+        }
+      })
+    };
+
+    await processLeadTask("task_1", {
+      prisma,
+      runPipeline: async () => result,
+      now: () => new Date(clock++)
+    });
+
+    expect(creates).toHaveLength(2);
+    expect(leaseUpdates).toHaveLength(2);
+    expect(leaseUpdates[0].data.startedAt.getTime()).toBeGreaterThan(leaseUpdates[0].where.startedAt.getTime());
+    expect(leaseUpdates[1].where.startedAt).toEqual(leaseUpdates[0].data.startedAt);
+    expect(rootUpdates.at(-1).where.startedAt).toEqual(leaseUpdates[1].data.startedAt);
+    expect(rootUpdates.at(-1).data).toMatchObject({ status: "completed", deliveredCount: 2 });
+  });
+
+  it("writes no companies or final state after a recovery scanner takes the lease", async () => {
+    const rootUpdates: any[] = [];
+    const create = vi.fn(async () => ({}));
+    const count = vi.fn(async () => 0);
+    const result: PipelineResult = {
+      marketSummary: { summary: "", keywords: [], buyerConcerns: [] },
+      searchedCount: 6,
+      delivered: Array.from({ length: 5 }, (_, index) => deliveredLead({ name: `Medical ${index}`, normalizedName: `medical ${index}` })),
+      alternates: [deliveredLead({ name: "Alternate Medical", normalizedName: "alternate medical" })],
+      rejected: []
+    };
+    const prisma = {
+      leadTask: {
+        updateMany: async (args: any) => {
+          rootUpdates.push(args);
+          return { count: 1 };
+        },
+        findUnique: async () => task,
+        update: async () => ({})
+      },
+      company: { findMany: async () => [], create, count },
+      $transaction: async (callback: (tx: any) => Promise<unknown>) => callback({
+        leadTask: { updateMany: async () => ({ count: 0 }) },
+        company: { create }
+      })
+    };
+
+    await processLeadTask("task_1", { prisma, runPipeline: async () => result });
+
+    expect(create).not.toHaveBeenCalled();
+    expect(count).toHaveBeenCalledTimes(1);
+    expect(rootUpdates).toHaveLength(1);
+  });
+
   it("persists normalized brands and filters candidates matching an existing brand", () => {
     const brandedLead = deliveredLead({ brandNames: [" ACME Care ", "acme care", ""] });
     const data = buildCompanyCreateData(task, brandedLead, new Date());
 
     expect(data.brandNames).toEqual(["ACME Care"]);
-    expect(data.brands.create).toEqual([{ name: "ACME Care", normalizedName: "acme care", country: "Saudi Arabia", region: "Middle East" }]);
+    expect(data.brands.create).toEqual([
+      {
+        name: "Arabian Medical Supplies Co.",
+        normalizedName: "arabian medical supplies",
+        country: "Saudi Arabia",
+        region: "Middle East"
+      },
+      { name: "ACME Care", normalizedName: "acme care", country: "Saudi Arabia", region: "Middle East" }
+    ]);
     expect(filterExistingCompanies([candidate({ name: "Acme Care" })], [{ normalizedName: "parent", domain: null, country: "Saudi Arabia", region: "Middle East", brands: [{ normalizedName: "acme care" }] }])).toEqual([]);
+  });
+
+  it("queries existing identities only after receiving a bounded candidate set", async () => {
+    const events: string[] = [];
+    const findMany = vi.fn(async (args: unknown) => {
+      events.push("existing-query");
+      return [];
+    });
+    const candidates = Array.from({ length: 20 }, (_, index) => candidate({
+      name: `Candidate ${index + 1}`,
+      brandNames: [`Brand ${index + 1}`],
+      website: `https://candidate-${index + 1}.example`
+    }));
+    const adapters: AdapterSet = {
+      search: {
+        searchCompanies: async () => {
+          events.push("search");
+          return candidates;
+        }
+      },
+      contacts: { findContacts: async () => [] }
+    };
+    const emptyResult: PipelineResult = {
+      marketSummary: { summary: "", keywords: [], buyerConcerns: [] },
+      searchedCount: 10,
+      delivered: [],
+      alternates: [],
+      rejected: []
+    };
+    const prisma = {
+      leadTask: {
+        updateMany: async () => ({ count: 1 }),
+        findUnique: async () => task,
+        update: async () => ({})
+      },
+      company: { findMany, create: async () => ({}), count: async () => 0 },
+      $transaction: unusedTransaction
+    };
+
+    await processLeadTask("task_1", {
+      prisma,
+      createAdapters: () => adapters,
+      runPipeline: async (_input, pipelineAdapters) => {
+        await pipelineAdapters.search.searchCompanies({ region: "Middle East", countries: [], keywords: [], customerTypes: [] });
+        return emptyResult;
+      }
+    });
+
+    expect(events).toEqual(["search", "existing-query"]);
+    const query = JSON.stringify(findMany.mock.calls[0]?.[0]);
+    expect(query).toContain("candidate 10");
+    expect(query).toContain("candidate-10.example");
+    expect(query).toContain("brand 10");
+    expect(query).not.toContain("candidate 11");
+    expect(query).not.toContain("candidate-11.example");
+    expect(query).not.toContain("brand 11");
   });
 
   it("does not reject when the task lookup and failed-status update both fail", async () => {
@@ -368,7 +572,8 @@ describe("task processing", () => {
         findMany: async () => [],
         create: async () => ({}),
         count: async () => 0
-      }
+      },
+      $transaction: unusedTransaction
     };
 
     await expect(processLeadTask("task_1", { prisma })).resolves.toBeUndefined();
@@ -391,7 +596,8 @@ describe("task processing", () => {
         findMany: async () => [],
         create: async () => ({}),
         count: async () => 0
-      }
+      },
+      $transaction: unusedTransaction
     };
 
     await expect(

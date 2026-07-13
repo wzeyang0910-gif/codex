@@ -45,6 +45,14 @@ export type PipelineResult = {
   rejected: PipelineRejectedLead[];
 };
 
+export function pipelineAlternateLimit(targetCount: number): number {
+  return Math.max(targetCount, 5);
+}
+
+export function pipelineCandidateLimit(targetCount: number): number {
+  return targetCount + pipelineAlternateLimit(targetCount);
+}
+
 function estimateProductFit(company: CandidateCompany) {
   const text = `${company.businessSummary} ${company.demandSignals.join(" ")}`.toLowerCase();
   return /kinesiology|sports|wound|bandage|orthopedic|first aid|pharmacy/.test(text) ? 88 : 58;
@@ -56,12 +64,12 @@ function estimateCompanySizeFit(company: CandidateCompany) {
 
 export async function runLeadPipeline(input: RunLeadPipelineInput, adapters: AdapterSet): Promise<PipelineResult> {
   const marketSummary = buildMarketResearchSummary(input);
-  const candidates = await adapters.search.searchCompanies({
+  const candidates = (await adapters.search.searchCompanies({
     region: input.region,
     countries: input.countries,
     keywords: marketSummary.keywords,
     customerTypes: input.customerTypes
-  });
+  })).slice(0, pipelineCandidateLimit(input.targetCount));
   const recommendedProducts = selectRecommendedProducts(input.productKeys);
   const delivered: PipelineDeliveredLead[] = [];
   const alternates: PipelineDeliveredLead[] = [];
@@ -124,7 +132,7 @@ export async function runLeadPipeline(input: RunLeadPipelineInput, adapters: Ada
       outreach
     };
     if (delivered.length < input.targetCount) delivered.push(qualifiedLead);
-    else alternates.push(qualifiedLead);
+    else if (alternates.length < pipelineAlternateLimit(input.targetCount)) alternates.push(qualifiedLead);
   }
 
   return { marketSummary, searchedCount: candidates.length, delivered, alternates, rejected };
