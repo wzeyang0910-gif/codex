@@ -27,7 +27,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "任务参数不完整" }, { status: 400 });
   }
 
-  const { start, end } = shanghaiDayBounds(new Date());
   let reservation: {
     quota: ReturnType<typeof canCreateTask>;
     task?: { id: string; status: string };
@@ -36,6 +35,7 @@ export async function POST(request: Request) {
   try {
     reservation = await prisma.$transaction(
       async (transaction) => {
+        const { start, end } = shanghaiDayBounds(new Date());
         const [deliveredToday, activeTasks] = await Promise.all([
           transaction.company.count({
             where: {

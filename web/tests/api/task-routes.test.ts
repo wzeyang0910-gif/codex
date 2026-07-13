@@ -272,6 +272,41 @@ describe("Task 7 protected routes", () => {
     });
   });
 
+  it("computes the Shanghai quota day when the transaction starts", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-12T15:59:59.999Z"));
+    mocks.countCompanies.mockResolvedValue(0);
+    mocks.findActiveTasks.mockResolvedValue([]);
+    mocks.createTask.mockResolvedValue({ id: "task_1", status: "queued" });
+    mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) => {
+      vi.setSystemTime(new Date("2026-07-12T16:00:00.000Z"));
+      return callback({
+        company: { count: mocks.countCompanies },
+        leadTask: { findMany: mocks.findActiveTasks, create: mocks.createTask }
+      });
+    });
+
+    try {
+      const response = await TaskRoute.POST(
+        requestFor(owner, { method: "POST", body: JSON.stringify(validTaskPayload) })
+      );
+
+      expect(response.status).toBe(200);
+      expect(mocks.countCompanies).toHaveBeenCalledWith({
+        where: {
+          ownerId: owner.id,
+          isDelivered: true,
+          deliveredAt: {
+            gte: new Date("2026-07-12T16:00:00.000Z"),
+            lt: new Date("2026-07-13T16:00:00.000Z")
+          }
+        }
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("absorbs a rejected post-response task callback", async () => {
     let callback: (() => unknown) | undefined;
     mocks.countCompanies.mockResolvedValue(0);
