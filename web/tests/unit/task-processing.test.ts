@@ -499,13 +499,19 @@ describe("task processing", () => {
     expect(filterExistingCompanies([candidate({ name: "Acme Care" })], [{ normalizedName: "parent", domain: null, country: "Saudi Arabia", region: "Middle East", brands: [{ normalizedName: "acme care" }] }])).toEqual([]);
   });
 
-  it("queries existing identities only after receiving a bounded candidate set", async () => {
+  it("filters a bounded recall window before truncating candidates for the pipeline", async () => {
     const events: string[] = [];
-    const findMany = vi.fn(async (args: unknown) => {
+    const findMany = vi.fn(async (args: any) => {
       events.push("existing-query");
-      return [];
+      return Array.from({ length: 10 }, (_, index) => ({
+        normalizedName: `candidate ${index + 1}`,
+        domain: `candidate-${index + 1}.example`,
+        country: "Saudi Arabia",
+        region: "Middle East",
+        brands: []
+      }));
     });
-    const candidates = Array.from({ length: 20 }, (_, index) => candidate({
+    const candidates = Array.from({ length: 40 }, (_, index) => candidate({
       name: `Candidate ${index + 1}`,
       brandNames: [`Brand ${index + 1}`],
       website: `https://candidate-${index + 1}.example`
@@ -535,24 +541,66 @@ describe("task processing", () => {
       company: { findMany, create: async () => ({}), count: async () => 0 },
       $transaction: unusedTransaction
     };
+    let pipelineCandidates: CandidateCompany[] = [];
 
     await processLeadTask("task_1", {
       prisma,
       createAdapters: () => adapters,
       runPipeline: async (_input, pipelineAdapters) => {
-        await pipelineAdapters.search.searchCompanies({ region: "Middle East", countries: [], keywords: [], customerTypes: [] });
+        pipelineCandidates = await pipelineAdapters.search.searchCompanies({ region: "Middle East", countries: [], keywords: [], customerTypes: [] });
         return emptyResult;
       }
     });
 
     expect(events).toEqual(["search", "existing-query"]);
-    const query = JSON.stringify(findMany.mock.calls[0]?.[0]);
-    expect(query).toContain("candidate 10");
-    expect(query).toContain("candidate-10.example");
-    expect(query).toContain("brand 10");
-    expect(query).not.toContain("candidate 11");
-    expect(query).not.toContain("candidate-11.example");
-    expect(query).not.toContain("brand 11");
+    expect(findMany.mock.calls[0]?.[0].take).toBe(30);
+    const query = JSON.stringify(findMany.mock.calls[0]?.[0].where);
+    expect(query).toContain("candidate 30");
+    expect(query).toContain("candidate-30.example");
+    expect(query).toContain("brand 30");
+    expect(query).not.toContain("candidate 31");
+    expect(query).not.toContain("candidate-31.example");
+    expect(query).not.toContain("brand 31");
+    expect(pipelineCandidates).toHaveLength(10);
+    expect(pipelineCandidates[0]?.name).toBe("Candidate 11");
+    expect(pipelineCandidates.at(-1)?.name).toBe("Candidate 20");
+  });
+
+  it("caps the global dedupe recall query and pipeline return", async () => {
+    const candidates = Array.from({ length: 120 }, (_, index) => candidate({
+      name: `Candidate ${index + 1}`,
+      website: `https://candidate-${index + 1}.example`
+    }));
+    const findMany = vi.fn(async (_args: any) => []);
+    const prisma = {
+      leadTask: {
+        updateMany: async () => ({ count: 1 }),
+        findUnique: async () => ({ ...task, targetCount: 40 }),
+        update: async () => ({})
+      },
+      company: { findMany, create: async () => ({}), count: async () => 0 },
+      $transaction: unusedTransaction
+    };
+    let pipelineCandidates: CandidateCompany[] = [];
+
+    await processLeadTask("task_1", {
+      prisma,
+      createAdapters: () => ({
+        search: { searchCompanies: async () => candidates },
+        contacts: { findContacts: async () => [] }
+      }),
+      runPipeline: async (_input, pipelineAdapters) => {
+        pipelineCandidates = await pipelineAdapters.search.searchCompanies({ region: "Middle East", countries: [], keywords: [], customerTypes: [] });
+        return { marketSummary: { summary: "", keywords: [], buyerConcerns: [] }, searchedCount: 0, delivered: [], alternates: [], rejected: [] };
+      }
+    });
+
+    expect(findMany.mock.calls[0]?.[0].take).toBe(100);
+    const query = JSON.stringify(findMany.mock.calls[0]?.[0].where);
+    expect(query).toContain("candidate 100");
+    expect(query).not.toContain("candidate 101");
+    expect(pipelineCandidates).toHaveLength(80);
+    expect(pipelineCandidates.at(-1)?.name).toBe("Candidate 80");
   });
 
   it("does not reject when the task lookup and failed-status update both fail", async () => {

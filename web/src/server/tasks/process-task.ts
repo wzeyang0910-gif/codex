@@ -38,7 +38,7 @@ type TaskProcessingPrisma = {
     updateMany(args: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<{ count: number }>;
   };
   company: {
-    findMany(args: { where: Record<string, unknown>; select: Record<string, unknown> }): Promise<ExistingCompany[]>;
+    findMany(args: { where: Record<string, unknown>; select: Record<string, unknown>; take: number }): Promise<ExistingCompany[]>;
     create(args: { data: ReturnType<typeof buildCompanyCreateData> }): Promise<unknown>;
     count(args: { where: { taskId: string; isDelivered: true } }): Promise<number>;
   };
@@ -55,6 +55,8 @@ type TaskProcessingTransaction = {
 };
 
 export const STALE_RUNNING_TASK_MS = 15 * 60 * 1000;
+const GLOBAL_DEDUPE_RECALL_MULTIPLIER = 3;
+const GLOBAL_DEDUPE_RECALL_MAX = 100;
 
 export type ProcessLeadTaskDependencies = {
   prisma?: TaskProcessingPrisma;
@@ -140,7 +142,9 @@ function applyGlobalDedupe(
     ...adapters,
     search: {
       async searchCompanies(input) {
-        const candidates = (await adapters.search.searchCompanies(input)).slice(0, pipelineCandidateLimit(targetCount));
+        const candidateLimit = pipelineCandidateLimit(targetCount);
+        const recallLimit = Math.min(candidateLimit * GLOBAL_DEDUPE_RECALL_MULTIPLIER, GLOBAL_DEDUPE_RECALL_MAX);
+        const candidates = (await adapters.search.searchCompanies(input)).slice(0, recallLimit);
         if (candidates.length === 0) return [];
         const existingCompanies = await companyPrisma.findMany({
           where: existingCompanyWhere(candidates),
@@ -150,9 +154,10 @@ function applyGlobalDedupe(
             country: true,
             region: true,
             brands: { select: { normalizedName: true } }
-          }
+          },
+          take: recallLimit
         });
-        return filterExistingCompanies(candidates, existingCompanies);
+        return filterExistingCompanies(candidates, existingCompanies).slice(0, candidateLimit);
       }
     }
   };
