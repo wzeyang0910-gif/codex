@@ -8,6 +8,8 @@ function isPrismaP2002(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
 }
 
+class CustomerRenameConflictError extends Error {}
+
 export async function PATCH(request: Request, context: { params: Promise<{ customerId: string }> }) {
   const user = getSessionFromRequest(request);
 
@@ -37,23 +39,64 @@ export async function PATCH(request: Request, context: { params: Promise<{ custo
     return NextResponse.json({ error: "客户更新内容不正确" }, { status: 400 });
   }
 
-  const rename =
-    parsed.data.name !== undefined && parsed.data.name !== existingCustomer.name
-      ? { name: parsed.data.name, normalizedName: normalizeCompanyName(parsed.data.name) }
-      : null;
-
   try {
     const customer = await prisma.$transaction(async (tx) => {
-      const updatedCustomer = await tx.company.update({
+      if (parsed.data.name === undefined) {
+        return tx.company.update({
+          where: { id: customerId },
+          data: parsed.data
+        });
+      }
+
+      const currentCustomer = await tx.company.findUnique({
         where: { id: customerId },
-        data: rename ? { ...parsed.data, normalizedName: rename.normalizedName } : parsed.data
+        select: { name: true, normalizedName: true }
       });
 
-      if (rename) {
-        await tx.companyBrand.updateMany({
-          where: { companyId: customerId, normalizedName: existingCustomer.normalizedName },
-          data: rename
+      if (!currentCustomer) {
+        throw new CustomerRenameConflictError();
+      }
+
+      if (parsed.data.name === currentCustomer.name) {
+        return tx.company.update({
+          where: { id: customerId },
+          data: parsed.data
         });
+      }
+
+      const rename = {
+        name: parsed.data.name,
+        normalizedName: normalizeCompanyName(parsed.data.name)
+      };
+      const companyUpdate = await tx.company.updateMany({
+        where: {
+          id: customerId,
+          name: currentCustomer.name,
+          normalizedName: currentCustomer.normalizedName
+        },
+        data: { ...parsed.data, normalizedName: rename.normalizedName }
+      });
+
+      if (companyUpdate.count !== 1) {
+        throw new CustomerRenameConflictError();
+      }
+
+      const identityUpdate = await tx.companyBrand.updateMany({
+        where: {
+          companyId: customerId,
+          name: currentCustomer.name,
+          normalizedName: currentCustomer.normalizedName
+        },
+        data: rename
+      });
+
+      if (identityUpdate.count !== 1) {
+        throw new CustomerRenameConflictError();
+      }
+
+      const updatedCustomer = await tx.company.findUnique({ where: { id: customerId } });
+      if (!updatedCustomer) {
+        throw new CustomerRenameConflictError();
       }
 
       return updatedCustomer;
@@ -61,7 +104,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ custo
 
     return NextResponse.json({ customer });
   } catch (error) {
-    if (isPrismaP2002(error)) {
+    if (isPrismaP2002(error) || error instanceof CustomerRenameConflictError) {
       return NextResponse.json({ error: "客户名称已存在" }, { status: 409 });
     }
 

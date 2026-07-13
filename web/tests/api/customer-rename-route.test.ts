@@ -4,7 +4,9 @@ const mocks = vi.hoisted(() => ({
   sessionUser: null as { id: string; name: string; email: string; role: "admin" | "sales" } | null,
   transaction: vi.fn(),
   findCompany: vi.fn(),
+  findCompanyInTransaction: vi.fn(),
   updateCompany: vi.fn(),
+  updateCompanies: vi.fn(),
   updateCompanyBrand: vi.fn()
 }));
 
@@ -48,11 +50,17 @@ describe("customer rename route", () => {
     vi.resetAllMocks();
     mocks.sessionUser = null;
     mocks.findCompany.mockResolvedValue(existingCustomer);
+    mocks.findCompanyInTransaction.mockResolvedValue(existingCustomer);
     mocks.updateCompany.mockResolvedValue({ id: "customer_1", ...existingCustomer });
+    mocks.updateCompanies.mockResolvedValue({ count: 1 });
     mocks.updateCompanyBrand.mockResolvedValue({ count: 1 });
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback({
-        company: { update: mocks.updateCompany },
+        company: {
+          findUnique: mocks.findCompanyInTransaction,
+          update: mocks.updateCompany,
+          updateMany: mocks.updateCompanies
+        },
         companyBrand: { updateMany: mocks.updateCompanyBrand }
       })
     );
@@ -102,12 +110,16 @@ describe("customer rename route", () => {
     const response = await patch(requestFor(admin, { name: "Nova Health Trading", notes: "Renamed" }));
 
     expect(response.status).toBe(200);
-    expect(mocks.updateCompany).toHaveBeenCalledWith({
+    expect(mocks.findCompanyInTransaction).toHaveBeenCalledWith({
       where: { id: "customer_1" },
+      select: { name: true, normalizedName: true }
+    });
+    expect(mocks.updateCompanies).toHaveBeenCalledWith({
+      where: { id: "customer_1", name: "Acme Medical Ltd", normalizedName: "acme medical" },
       data: { name: "Nova Health Trading", normalizedName: "nova health", notes: "Renamed" }
     });
     expect(mocks.updateCompanyBrand).toHaveBeenCalledWith({
-      where: { companyId: "customer_1", normalizedName: "acme medical" },
+      where: { companyId: "customer_1", name: "Acme Medical Ltd", normalizedName: "acme medical" },
       data: { name: "Nova Health Trading", normalizedName: "nova health" }
     });
   });
@@ -117,7 +129,7 @@ describe("customer rename route", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.updateCompanyBrand).toHaveBeenCalledWith({
-      where: { companyId: "customer_1", normalizedName: "acme medical" },
+      where: { companyId: "customer_1", name: "Acme Medical Ltd", normalizedName: "acme medical" },
       data: { name: "ACME Medical Company", normalizedName: "acme medical" }
     });
   });
@@ -129,8 +141,46 @@ describe("customer rename route", () => {
 
     expect(response.status).toBe(409);
     expect(mocks.transaction).toHaveBeenCalledOnce();
-    expect(mocks.updateCompany).toHaveBeenCalledOnce();
+    expect(mocks.updateCompanies).toHaveBeenCalledOnce();
     expect(mocks.updateCompanyBrand).toHaveBeenCalledOnce();
     await expect(response.json()).resolves.toMatchObject({ error: expect.any(String) });
+  });
+
+  it("uses the identity re-read inside the transaction instead of the stale authorization read", async () => {
+    mocks.findCompanyInTransaction.mockResolvedValue({
+      name: "Acme Medical Group",
+      normalizedName: "acme medical group"
+    });
+
+    const response = await patch(requestFor(owner, { name: "Nova Health Trading" }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.updateCompanies).toHaveBeenCalledWith({
+      where: { id: "customer_1", name: "Acme Medical Group", normalizedName: "acme medical group" },
+      data: { name: "Nova Health Trading", normalizedName: "nova health" }
+    });
+    expect(mocks.updateCompanyBrand).toHaveBeenCalledWith({
+      where: { companyId: "customer_1", name: "Acme Medical Group", normalizedName: "acme medical group" },
+      data: { name: "Nova Health Trading", normalizedName: "nova health" }
+    });
+  });
+
+  it("returns 409 when another rename wins before the conditional company update", async () => {
+    mocks.updateCompanies.mockResolvedValue({ count: 0 });
+
+    const response = await patch(requestFor(owner, { name: "Nova Health Trading" }));
+
+    expect(response.status).toBe(409);
+    expect(mocks.updateCompanyBrand).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 and aborts when the legal identity row is missing", async () => {
+    mocks.updateCompanyBrand.mockResolvedValue({ count: 0 });
+
+    const response = await patch(requestFor(owner, { name: "Nova Health Trading" }));
+
+    expect(response.status).toBe(409);
+    expect(mocks.updateCompanies).toHaveBeenCalledOnce();
+    expect(mocks.updateCompanyBrand).toHaveBeenCalledOnce();
   });
 });
