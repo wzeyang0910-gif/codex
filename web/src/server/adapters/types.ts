@@ -46,3 +46,14 @@ export type AdapterSet = {
 };
 
 export type LeadDataAdapter = AdapterSet;
+
+export type ProviderCallEvent = {
+  provider: string;
+  endpoint: string;
+  status: "success" | "error";
+  creditsUsed: number;
+  durationMs: number;
+  error?: string;
+};
+
+export type ProviderCallObserver = (event: ProviderCallEvent) => void | Promise<void>;

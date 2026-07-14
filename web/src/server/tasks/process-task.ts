@@ -1,8 +1,9 @@
 import type { LeadTaskStatus } from "@prisma/client";
 import { extractDomain, normalizeCompanyName } from "@/lib/dedupe";
 import { prisma as defaultPrisma } from "@/lib/db";
-import { createAdapterSet } from "@/server/adapters/mock";
-import type { AdapterSet, CandidateCompany } from "@/server/adapters/types";
+import { createApiCallLogger } from "@/server/adapters/api-call-logger";
+import { createConfiguredAdapterSet } from "@/server/adapters/configured";
+import type { AdapterSet, CandidateCompany, ProviderCallObserver } from "@/server/adapters/types";
 import {
   pipelineCandidateLimit,
   runLeadPipeline,
@@ -42,6 +43,9 @@ type TaskProcessingPrisma = {
     create(args: { data: ReturnType<typeof buildCompanyCreateData> }): Promise<unknown>;
     count(args: { where: { taskId: string; isDelivered: true } }): Promise<number>;
   };
+  apiCallLog?: {
+    create(args: { data: Record<string, unknown> }): Promise<unknown>;
+  };
   $transaction(callback: (transaction: TaskProcessingTransaction) => Promise<unknown>): Promise<unknown>;
 };
 
@@ -69,7 +73,7 @@ type CandidateIdentity = {
 
 export type ProcessLeadTaskDependencies = {
   prisma?: TaskProcessingPrisma;
-  createAdapters?: () => AdapterSet;
+  createAdapters?: (options?: { onCall?: ProviderCallObserver }) => AdapterSet;
   runPipeline?: (input: RunLeadPipelineInput, adapters: AdapterSet) => Promise<PipelineResult>;
   now?: () => Date;
 };
@@ -358,8 +362,9 @@ export async function processLeadTask(taskId: string, dependencies: ProcessLeadT
       return;
     }
 
+    const onCall = createApiCallLogger(taskPrisma, { userId: task.userId, taskId: task.id });
     const adapters = applyGlobalDedupe(
-      (dependencies.createAdapters ?? createAdapterSet)(),
+      (dependencies.createAdapters ?? createConfiguredAdapterSet)({ onCall }),
       taskPrisma.company,
       task.targetCount
     );

@@ -72,6 +72,67 @@ async function unusedTransaction(): Promise<never> {
 }
 
 describe("task processing", () => {
+  it("wires provider telemetry to the current user and task", async () => {
+    const createApiLog = vi.fn(async () => ({}));
+    let onCall: ((event: {
+      provider: string;
+      endpoint: string;
+      status: "success" | "error";
+      creditsUsed: number;
+      durationMs: number;
+    }) => void | Promise<void>) | undefined;
+    const prisma = {
+      leadTask: {
+        updateMany: async () => ({ count: 1 }),
+        findUnique: async () => task,
+        update: async () => ({})
+      },
+      company: {
+        findMany: async () => [],
+        create: async () => ({}),
+        count: async () => 0
+      },
+      apiCallLog: { create: createApiLog },
+      $transaction: unusedTransaction
+    };
+
+    await processLeadTask("task_1", {
+      prisma,
+      createAdapters: (options) => {
+        onCall = options?.onCall;
+        return {
+          search: { searchCompanies: async () => [] },
+          contacts: { findContacts: async () => [] }
+        };
+      },
+      runPipeline: async () => {
+        await onCall?.({
+          provider: "Prospeo",
+          endpoint: "search-company",
+          status: "success",
+          creditsUsed: 1,
+          durationMs: 123
+        });
+        return {
+          marketSummary: { summary: "", keywords: [], buyerConcerns: [] },
+          searchedCount: 0,
+          delivered: [],
+          alternates: [],
+          rejected: []
+        };
+      }
+    });
+
+    expect(createApiLog).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: "user_1",
+        taskId: "task_1",
+        provider: "Prospeo",
+        endpoint: "search-company"
+      })
+    });
+  });
+
   it("filters companies that already exist globally before the pipeline evaluates them", () => {
     const existing = [
       { normalizedName: "arabian medical supplies", domain: null, country: "Saudi Arabia", region: "Middle East" },
