@@ -2,7 +2,7 @@
 
 本文供内部同事在 Windows 本机首次启动和验收系统使用。
 
-> 当前状态（2026-07-13）：本机未检测到 PostgreSQL，也未检测到 Docker。请先安装 PostgreSQL；Docker 不是本说明的前置条件。由于当前缺少可用数据库，尚未完成真实 PostgreSQL 的端到端验收。首次验收请保留 `USE_MOCK_ADAPTERS="true"`，先检查网站流程，不调用真实外部数据服务。
+> 当前状态（2026-07-14）：本机已安装 PostgreSQL 17，已创建 `yonye_leads` 数据库，并完成基线迁移、初始数据写入和本地端到端验收。首次验收请保留 `USE_MOCK_ADAPTERS="true"`，先检查网站流程，不调用真实外部数据服务。
 
 ## 首次启动前
 
@@ -66,11 +66,11 @@ USE_MOCK_ADAPTERS="true"
 ```powershell
 npm install
 npm run prisma:generate
-npm run prisma:migrate -- --name init
+npm run prisma:deploy
 npm run prisma:seed
 ```
 
-这些命令分别用于安装依赖、生成数据库客户端、创建/更新数据库表，以及写入产品和本地测试账号。`npm run prisma:seed` 会显式读取当前 `web` 目录中的 `.env`，无需先把密码复制到终端环境中。第一次迁移使用名称 `init`；以后数据库结构有更新时，可把名称换成能说明变更内容的英文短语。
+这些命令分别用于安装依赖、生成数据库客户端、应用仓库中已经审核的数据库迁移，以及写入产品和本地测试账号。`npm run prisma:seed` 会显式读取当前 `web` 目录中的 `.env`，无需先把密码复制到终端环境中。只有开发人员修改数据库结构时才使用 `npm run prisma:migrate -- --name change_name` 生成新的迁移；普通安装和部署始终使用 `npm run prisma:deploy`。
 
 ### 4. 启动网站
 
